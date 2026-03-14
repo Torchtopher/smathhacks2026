@@ -11,5 +11,7 @@ dependencies = [
     "opendrift>=1.14.8",
     "psutil>=7.2.2",
     "psycopg>=3.3.3",
+    "roboflow>=1.2.16",
+    "ultralytics>=8.4.22",
     "uvicorn>=0.41.0",
 ]
