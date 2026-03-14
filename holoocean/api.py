@@ -270,7 +270,7 @@ VIEWPORT_SENSOR_NAME = os.getenv("VIEWPORT_SENSOR_NAME", "ViewportCapture")
 VIEWPORT_WIDTH = int(os.getenv("VIEWPORT_WIDTH", "1280"))
 VIEWPORT_HEIGHT = int(os.getenv("VIEWPORT_HEIGHT", "720"))
 HOLOOCEAN_VERBOSE = env_bool("HOLOOCEAN_VERBOSE", False)
-HOLOOCEAN_SHOW_VIEWPORT = env_bool("HOLOOCEAN_SHOW_VIEWPORT", True)
+HOLOOCEAN_SHOW_VIEWPORT = env_bool("HOLOOCEAN_SHOW_VIEWPORT", False)
 JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "90"))
 
 viewport_service = HoloOceanViewportService(
