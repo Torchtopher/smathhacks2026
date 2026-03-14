@@ -38,6 +38,7 @@ export function MapView({
         <TileLayer
           key={dark ? "dark" : "light"}
           url={dark ? TILE_DARK : TILE_LIGHT}
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
         />
         <BoatMarkers boats={boats} selectedBoatId={selectedBoatId} onBoatClick={onBoatClick} dark={dark} />
         <TrashLayer trashPoints={trashPoints} timeHours={timeHours} />
