@@ -1,4 +1,4 @@
-import type { BoatState, DriftPoint, TrashPoint } from "@/types"
+import type { BoatState, DriftPoint } from "@/types"
 
 // Make a fake data points
 function generateTrail(lat: number, lon: number, heading: number): [number, number][] {
@@ -98,11 +98,7 @@ export const demoBoats: BoatState[] = [
   },
 ]
 
-const CLASS_NAMES: TrashPoint["class_name"][] = [
-  "bottle", "plastic bag", "cup", "fishing line", "styrofoam",
-]
-
-export const demoTrash: TrashPoint[] = demoBoats.flatMap((boat, bi) =>
+export const demoTrash = demoBoats.flatMap((boat, _bi) =>
   Array.from({ length: 3 }, (_, i) => {
     const offsetLat = (Math.random() - 0.5) * 0.04
     const offsetLon = (Math.random() - 0.5) * 0.04
@@ -112,7 +108,6 @@ export const demoTrash: TrashPoint[] = demoBoats.flatMap((boat, bi) =>
       id: `trash-${boat.boat_id}-${i}`,
       lat,
       lon,
-      class_name: CLASS_NAMES[(bi * 3 + i) % CLASS_NAMES.length],
       confidence: 0.7 + Math.random() * 0.25,
       detected_at: Date.now() - Math.random() * 3600000,
       boat_id: boat.boat_id,

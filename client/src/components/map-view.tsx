@@ -31,7 +31,7 @@ export function MapView({
   return (
     <div className="relative flex-1">
       <MapContainer
-        center={[44.2, -68.8]}
+        center={[35.0, -55.0]}
         zoom={10}
         className="absolute inset-0 w-full h-full"
       >

@@ -42,14 +42,12 @@ export const api = {
     }))
   },
 
-  async getTrash(driftDays = 7): Promise<TrashPoint[]> {
-    const days = Math.max(1, Math.min(7, Math.floor(driftDays)))
+  async getTrash(): Promise<TrashPoint[]> {
     const data = await get<{
       trash_points: {
         id: string
         lat: number
         lon: number
-        class_name: string
         confidence: number
         detected_at: number
         boat_id: string
@@ -59,12 +57,11 @@ export const api = {
           time_offset_hours: number
         }[]
       }[]
-    }>(`/api/trash?drift_days=${days}`)
+    }>(`/api/trash`)
     return data.trash_points.map((t) => ({
       id: t.id,
       lat: t.lat,
       lon: t.lon,
-      class_name: t.class_name as TrashPoint["class_name"],
       confidence: t.confidence,
       detected_at: t.detected_at,
       boat_id: t.boat_id,
@@ -77,7 +74,6 @@ export const api = {
       total_trash_detected: number
       active_boats: number
       last_detection_time: number | null
-      trash_by_class: Record<string, number>
     }>("/api/stats")
   },
 
@@ -100,7 +96,6 @@ export const api = {
       boat_id: string
       name: string
       weight_class: string
-      api_key: string
     }>("/api/boats/register", { name, weight_class: weightClass })
   },
 }

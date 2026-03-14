@@ -44,17 +44,16 @@ def project_detection_to_geo(
 @app.post("/api/boats/register")
 def register_boat(body: BoatRegisterInput) -> BoatRegisterResponse:
     boat_id = str(uuid4())
-    api_key = str(uuid4())
     created_at = time.time()
 
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO boats (id, name, weight_class, api_key, created_at)
-                VALUES (%s, %s, %s, %s, %s);
+                INSERT INTO boats (id, name, weight_class, created_at)
+                VALUES (%s, %s, %s, %s);
                 """,
-                (boat_id, body.name, body.weight_class, api_key, created_at),
+                (boat_id, body.name, body.weight_class, created_at),
             )
         conn.commit()
 
@@ -62,7 +61,6 @@ def register_boat(body: BoatRegisterInput) -> BoatRegisterResponse:
         boat_id=boat_id,
         name=body.name,
         weight_class=body.weight_class,
-        api_key=api_key,
     )
 
 
@@ -121,25 +119,39 @@ def report_boat(report: BoatReport) -> dict:
                 )
                 detection_id = str(uuid4())
 
+                drift_path: list[dict] = []
+                try:
+                    drift_path = predict_drift_days(
+                        detected_at=report.timestamp,
+                        lat=projected_lat,
+                        lon=projected_lon,
+                        days=7,
+                    )
+                except (Exception, SystemExit):
+                    logger.exception("Failed drift prediction for detection id=%s", detection_id)
+
+                drift_path_json = json.dumps(drift_path) if drift_path else None
+
                 cur.execute(
                     """
                     INSERT INTO trash_detections (
-                        id, boat_id, class_name, confidence, detected_at, bbox, location
+                        id, boat_id, confidence, detected_at, bbox, location, drift_path
                     )
                     VALUES (
-                        %s, %s, %s, %s, %s, %s,
-                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
+                        %s, %s, %s, %s, %s,
+                        ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,
+                        %s
                     );
                     """,
                     (
                         detection_id,
                         report.boat_id,
-                        det.class_name,
                         det.confidence,
                         report.timestamp,
                         json.dumps(det.bbox),
                         projected_lon,
                         projected_lat,
+                        drift_path_json,
                     ),
                 )
 
@@ -147,12 +159,12 @@ def report_boat(report: BoatReport) -> dict:
                     DetectionSaved(
                         id=detection_id,
                         boat_id=report.boat_id,
-                        class_name=det.class_name,
                         confidence=det.confidence,
                         detected_at=report.timestamp,
                         bbox=det.bbox,
                         projected_lat=projected_lat,
                         projected_lon=projected_lon,
+                        drift_path=drift_path,
                     )
                 )
 
@@ -189,11 +201,11 @@ def get_trash(
         SELECT
             id::text,
             boat_id,
-            class_name,
             confidence,
             detected_at,
             ST_Y(location::geometry) AS lat,
-            ST_X(location::geometry) AS lon
+            ST_X(location::geometry) AS lon,
+            drift_path
         FROM trash_detections
         WHERE {where_sql}
         ORDER BY detected_at DESC;
@@ -206,57 +218,20 @@ def get_trash(
 
     points: list[TrashPointResponse] = []
     for row in rows:
-        drift_path = []
-        try:
-            drift_path = predict_drift_days(
-                detected_at=float(row[4]),
-                lat=float(row[5]),
-                lon=float(row[6]),
-                days=drift_days,
-            )
-        except Exception:
-            logger.exception("Failed drift prediction for trash detection id=%s", row[0])
+        cached_drift = row[6] if row[6] else []
 
         points.append(
             TrashPointResponse(
                 id=row[0],
                 boat_id=row[1],
-                class_name=row[2],
-                confidence=row[3],
-                detected_at=row[4],
-                lat=row[5],
-                lon=row[6],
-                drift_path=drift_path,
+                confidence=row[2],
+                detected_at=row[3],
+                lat=row[4],
+                lon=row[5],
+                drift_path=cached_drift,
             )
         )
     return {"trash_points": points}
-
-
-@app.get("/api/trash/predict")
-def predict_future_trash_location(
-    lat: float = Query(...),
-    lon: float = Query(...),
-    days: int = Query(default=1, ge=1, le=7),
-    detected_at: float | None = Query(default=None),
-) -> dict:
-    start_timestamp = detected_at if detected_at is not None else time.time()
-
-    try:
-        drift_path = predict_drift_days(
-            detected_at=start_timestamp,
-            lat=lat,
-            lon=lon,
-            days=days,
-        )
-    except Exception as exc:
-        logger.exception("Failed drift prediction for lat=%s lon=%s days=%s", lat, lon, days)
-        raise HTTPException(status_code=500, detail=f"Drift prediction failed: {exc}") from exc
-
-    return {
-        "start": {"lat": lat, "lon": lon, "detected_at": start_timestamp},
-        "days": days,
-        "drift_path": drift_path,
-    }
 
 
 @app.get("/api/boats")
@@ -355,21 +330,10 @@ def get_stats() -> dict:
             cur.execute("SELECT MAX(detected_at) FROM trash_detections;")
             last_detection_time = cur.fetchone()[0]
 
-            cur.execute(
-                """
-                SELECT class_name, COUNT(*) AS count
-                FROM trash_detections
-                GROUP BY class_name
-                ORDER BY count DESC;
-                """
-            )
-            by_class_rows = cur.fetchall()
-
     return {
         "total_trash_detected": total_trash_detected,
         "active_boats": active_boats,
         "last_detection_time": last_detection_time,
-        "trash_by_class": {class_name: count for class_name, count in by_class_rows},
     }
 
 

@@ -33,13 +33,12 @@ def _to_utc_datetime(epoch_like: float) -> datetime:
 
 
 def predict_drift_days(
-    *,
     detected_at: float,
     lat: float,
     lon: float,
     days: int,
 ) -> list[dict[str, float]]:
-    start_t = _to_utc_datetime(detected_at)
+    start_t = _to_utc_datetime(detected_at).replace(year=2024, tzinfo=None)
     reader = _get_reader()
 
     model = OceanDrift(loglevel=30)
@@ -53,7 +52,7 @@ def predict_drift_days(
     )
     model.run(
         duration=timedelta(days=days),
-        time_step=timedelta(days=1),
+        time_step=timedelta(hours=12),
     )
 
     lats = model.result.lat.values[0]
@@ -63,7 +62,7 @@ def predict_drift_days(
         {
             "lat": float(lat_i),
             "lon": float(lon_i),
-            "time_offset_hours": float(idx * 24),
+            "time_offset_hours": float(idx * 12),
         }
         for idx, (lat_i, lon_i) in enumerate(zip(lats, lons))
     ]

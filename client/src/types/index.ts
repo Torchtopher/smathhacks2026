@@ -8,7 +8,7 @@ export interface BoatState {
   timestamp: number
   trail?: [number, number][]
   image?: string
-  api_key?: string
+
 }
 
 export interface DriftPoint {
@@ -21,7 +21,6 @@ export interface TrashPoint {
   id: string
   lat: number
   lon: number
-  class_name: "bottle" | "plastic bag" | "cup" | "fishing line" | "styrofoam"
   confidence: number
   detected_at: number
   boat_id: string

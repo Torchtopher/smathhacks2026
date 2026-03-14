@@ -2,7 +2,6 @@ from pydantic import BaseModel, Field
 
 
 class DetectionInput(BaseModel):
-    class_name: str
     confidence: float
     bbox: list[float] = Field(min_length=4, max_length=4)
 
@@ -25,18 +24,23 @@ class BoatRegisterResponse(BaseModel):
     boat_id: str
     name: str
     weight_class: str
-    api_key: str
+
+
+class DriftPoint(BaseModel):
+    lat: float
+    lon: float
+    time_offset_hours: float
 
 
 class DetectionSaved(BaseModel):
     id: str
     boat_id: str
-    class_name: str
     confidence: float
     detected_at: float
     bbox: list[float]
     projected_lat: float
     projected_lon: float
+    drift_path: list[DriftPoint] = Field(default_factory=list)
 
 
 class BoatStateResponse(BaseModel):
@@ -55,17 +59,10 @@ class BoatPositionPointResponse(BaseModel):
     timestamp: float
 
 
-class DriftPoint(BaseModel):
-    lat: float
-    lon: float
-    time_offset_hours: float
-
-
 class TrashPointResponse(BaseModel):
     id: str
     lat: float
     lon: float
-    class_name: str
     confidence: float
     detected_at: float
     boat_id: str

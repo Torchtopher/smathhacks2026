@@ -11,18 +11,17 @@ CREATE TABLE IF NOT EXISTS boat_states (
 CREATE TABLE IF NOT EXISTS trash_detections (
     id UUID PRIMARY KEY,
     boat_id TEXT NOT NULL,
-    class_name TEXT NOT NULL,
     confidence DOUBLE PRECISION NOT NULL,
     detected_at DOUBLE PRECISION NOT NULL,
     bbox JSONB NOT NULL,
-    location GEOGRAPHY(POINT, 4326) NOT NULL
+    location GEOGRAPHY(POINT, 4326) NOT NULL,
+    drift_path JSONB
 );
 
 CREATE TABLE IF NOT EXISTS boats (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     weight_class TEXT NOT NULL,
-    api_key TEXT UNIQUE NOT NULL,
     created_at DOUBLE PRECISION NOT NULL
 );
 

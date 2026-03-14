@@ -25,13 +25,8 @@ function App() {
   }, [dark])
 
   const fetchData = useCallback(async () => {
-    try {
-      const [b, t] = await Promise.all([api.getBoats(), api.getTrash()])
-      setBoats(b)
-      setTrashPoints(t)
-    } catch (err) {
-      console.error("Failed to fetch data:", err)
-    }
+    api.getBoats().then(setBoats).catch((err) => console.error("Failed to fetch boats:", err))
+    api.getTrash().then(setTrashPoints).catch((err) => console.error("Failed to fetch trash:", err))
   }, [])
 
   useEffect(() => {

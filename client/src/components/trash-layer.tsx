@@ -1,7 +1,7 @@
 import L from "leaflet"
 import { Marker, Tooltip, Polyline, CircleMarker } from "react-leaflet"
 import MarkerClusterGroup from "react-leaflet-cluster"
-import { TRASH_BG, TRASH_CSS_VAR } from "@/lib/colors"
+import { TRASH_BG_CLASS, TRASH_COLOR } from "@/lib/colors"
 import type { TrashPoint } from "@/types"
 
 interface TrashLayerProps {
@@ -9,14 +9,12 @@ interface TrashLayerProps {
   timeHours: number
 }
 
-function trashIcon(className: TrashPoint["class_name"]) {
-  return L.divIcon({
-    html: `<div class="${TRASH_BG[className]} w-3 h-3 rounded-full border-2 border-white"></div>`,
-    className: "",
-    iconSize: [12, 12],
-    iconAnchor: [6, 6],
-  })
-}
+const trashIcon = L.divIcon({
+  html: `<div class="${TRASH_BG_CLASS} w-3 h-3 rounded-full border-2 border-white"></div>`,
+  className: "",
+  iconSize: [12, 12],
+  iconAnchor: [6, 6],
+})
 
 function clusterIcon(cluster: { getChildCount: () => number }) {
   const count = cluster.getChildCount()
@@ -42,11 +40,11 @@ export function TrashLayer({ trashPoints, timeHours }: TrashLayerProps) {
           <Marker
             key={tp.id}
             position={[tp.lat, tp.lon]}
-            icon={trashIcon(tp.class_name)}
+            icon={trashIcon}
           >
             <Tooltip>
               <div className="text-sm">
-                <div className="font-semibold capitalize">{tp.class_name}</div>
+                <div className="font-semibold">Garbage</div>
                 <div>{(tp.confidence * 100).toFixed(0)}% confidence</div>
                 <div>{timeAgo(tp.detected_at)}</div>
               </div>
@@ -62,13 +60,12 @@ export function TrashLayer({ trashPoints, timeHours }: TrashLayerProps) {
           )
           if (visible.length < 2) return null
           const last = visible[visible.length - 1]
-          const color = TRASH_CSS_VAR[tp.class_name]
           return (
             <span key={`drift-${tp.id}`}>
               <Polyline
                 positions={visible.map((d) => [d.lat, d.lon])}
                 pathOptions={{
-                  color,
+                  color: TRASH_COLOR,
                   weight: 2,
                   dashArray: "6 4",
                   opacity: 0.6,
@@ -78,8 +75,8 @@ export function TrashLayer({ trashPoints, timeHours }: TrashLayerProps) {
                 center={[last.lat, last.lon]}
                 radius={5}
                 pathOptions={{
-                  color,
-                  fillColor: color,
+                  color: TRASH_COLOR,
+                  fillColor: TRASH_COLOR,
                   fillOpacity: 0.4,
                   weight: 1,
                 }}

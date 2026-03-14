@@ -27,7 +27,7 @@ interface AddBoatDialogProps {
 export function AddBoatDialog({ open, onOpenChange }: AddBoatDialogProps) {
   const [name, setName] = useState("")
   const [weightClass, setWeightClass] = useState<BoatState["weight_class"] | "">("")
-  const [apiKey, setApiKey] = useState<string | null>(null)
+  const [boatId, setBoatId] = useState<string | null>(null)
 
   const [copied, setCopied] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -43,7 +43,7 @@ export function AddBoatDialog({ open, onOpenChange }: AddBoatDialogProps) {
     try {
       const data = await api.registerBoat(name, weightClass)
 
-      setApiKey(data.api_key)
+      setBoatId(data.boat_id)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong")
     } finally {
@@ -55,7 +55,7 @@ export function AddBoatDialog({ open, onOpenChange }: AddBoatDialogProps) {
     if (!isOpen) {
       setName("")
       setWeightClass("")
-      setApiKey(null)
+      setBoatId(null)
       setError(null)
     }
     onOpenChange(isOpen)
@@ -65,24 +65,24 @@ export function AddBoatDialog({ open, onOpenChange }: AddBoatDialogProps) {
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{apiKey ? "Boat Added!" : "Add Your Boat"}</DialogTitle>
+          <DialogTitle>{boatId ? "Boat Added!" : "Add Your Boat"}</DialogTitle>
           <DialogDescription>
-            {apiKey
-              ? "Your boat has been registered. Save your API key below."
+            {boatId
+              ? "Your boat has been registered. Save your Boat ID below."
               : "Register your boat to start collecting ocean data."}
           </DialogDescription>
         </DialogHeader>
 
-        {apiKey ? (
+        {boatId ? (
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Your API Key</Label>
+              <Label>Your Boat ID</Label>
               <div className="flex gap-2">
-                <Input readOnly value={apiKey} className="font-mono text-sm" />
+                <Input readOnly value={boatId} className="font-mono text-sm" />
                 <Button
                   variant="secondary"
                   onClick={() => {
-                    navigator.clipboard.writeText(apiKey)
+                    navigator.clipboard.writeText(boatId)
                     setCopied(true)
                     setTimeout(() => setCopied(false), 2000)
                   }}
@@ -91,7 +91,7 @@ export function AddBoatDialog({ open, onOpenChange }: AddBoatDialogProps) {
                 </Button>
               </div>
               <p className="text-sm text-muted-foreground">
-                Keep this key safe — you'll need it to send data from your boat.
+                Keep this ID safe — you'll need it to send data from your boat.
               </p>
             </div>
             <Button className="w-full" onClick={() => handleClose(false)}>
