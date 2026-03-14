@@ -18,8 +18,7 @@ def predict(start_t, dt, lat, lon):
     )
 
     o.run(duration=dt, time_step=dt)
-    print(o.elements.lon)
-    print(o.elements.lat)
+    return o.elements.lon, o.elements.lat
 
 while True:
     days = int(input("Enter the number of days: "))

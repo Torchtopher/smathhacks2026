@@ -1,10 +1,12 @@
 import json
+import logging
 import time
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query
 
 from db import get_conn, init_db
+from drift_predictor import predict_drift_days
 from models import (
     BoatPositionPointResponse,
     BoatRegisterInput,
@@ -17,6 +19,7 @@ from models import (
 
 app = FastAPI(title="Marine Trash Detection Middleware")
 POSITION_HISTORY_RETENTION_SECONDS = 30 * 60
+logger = logging.getLogger(__name__)
 
 
 @app.on_event("startup")
@@ -165,6 +168,7 @@ def get_trash(
     min_lon: float | None = Query(default=None),
     max_lon: float | None = Query(default=None),
     min_confidence: float = Query(default=0.0, ge=0.0, le=1.0),
+    drift_days: int = Query(default=1, ge=1, le=7),
 ) -> dict:
     where_parts = ["confidence >= %s"]
     params: list[float] = [min_confidence]
@@ -200,19 +204,59 @@ def get_trash(
             cur.execute(query, params)
             rows = cur.fetchall()
 
-    points = [
-        TrashPointResponse(
-            id=row[0],
-            boat_id=row[1],
-            class_name=row[2],
-            confidence=row[3],
-            detected_at=row[4],
-            lat=row[5],
-            lon=row[6],
+    points: list[TrashPointResponse] = []
+    for row in rows:
+        drift_path = []
+        try:
+            drift_path = predict_drift_days(
+                detected_at=float(row[4]),
+                lat=float(row[5]),
+                lon=float(row[6]),
+                days=drift_days,
+            )
+        except Exception:
+            logger.exception("Failed drift prediction for trash detection id=%s", row[0])
+
+        points.append(
+            TrashPointResponse(
+                id=row[0],
+                boat_id=row[1],
+                class_name=row[2],
+                confidence=row[3],
+                detected_at=row[4],
+                lat=row[5],
+                lon=row[6],
+                drift_path=drift_path,
+            )
         )
-        for row in rows
-    ]
     return {"trash_points": points}
+
+
+@app.get("/api/trash/predict")
+def predict_future_trash_location(
+    lat: float = Query(...),
+    lon: float = Query(...),
+    days: int = Query(default=1, ge=1, le=7),
+    detected_at: float | None = Query(default=None),
+) -> dict:
+    start_timestamp = detected_at if detected_at is not None else time.time()
+
+    try:
+        drift_path = predict_drift_days(
+            detected_at=start_timestamp,
+            lat=lat,
+            lon=lon,
+            days=days,
+        )
+    except Exception as exc:
+        logger.exception("Failed drift prediction for lat=%s lon=%s days=%s", lat, lon, days)
+        raise HTTPException(status_code=500, detail=f"Drift prediction failed: {exc}") from exc
+
+    return {
+        "start": {"lat": lat, "lon": lon, "detected_at": start_timestamp},
+        "days": days,
+        "drift_path": drift_path,
+    }
 
 
 @app.get("/api/boats")

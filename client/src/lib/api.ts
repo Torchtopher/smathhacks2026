@@ -42,7 +42,8 @@ export const api = {
     }))
   },
 
-  async getTrash(): Promise<TrashPoint[]> {
+  async getTrash(driftDays = 7): Promise<TrashPoint[]> {
+    const days = Math.max(1, Math.min(7, Math.floor(driftDays)))
     const data = await get<{
       trash_points: {
         id: string
@@ -52,8 +53,13 @@ export const api = {
         confidence: number
         detected_at: number
         boat_id: string
+        drift_path?: {
+          lat: number
+          lon: number
+          time_offset_hours: number
+        }[]
       }[]
-    }>("/api/trash")
+    }>(`/api/trash?drift_days=${days}`)
     return data.trash_points.map((t) => ({
       id: t.id,
       lat: t.lat,
@@ -62,6 +68,7 @@ export const api = {
       confidence: t.confidence,
       detected_at: t.detected_at,
       boat_id: t.boat_id,
+      drift_path: t.drift_path ?? [],
     }))
   },
 

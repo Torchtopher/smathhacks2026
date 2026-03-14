@@ -55,6 +55,12 @@ class BoatPositionPointResponse(BaseModel):
     timestamp: float
 
 
+class DriftPoint(BaseModel):
+    lat: float
+    lon: float
+    time_offset_hours: float
+
+
 class TrashPointResponse(BaseModel):
     id: str
     lat: float
@@ -63,3 +69,4 @@ class TrashPointResponse(BaseModel):
     confidence: float
     detected_at: float
     boat_id: str
+    drift_path: list[DriftPoint] = Field(default_factory=list)

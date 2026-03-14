@@ -8,11 +8,13 @@ interface DriftControlsProps {
 
 const STEPS = [
   { hours: 0, label: "Now" },
-  { hours: 4, label: "+4h" },
-  { hours: 8, label: "+8h" },
-  { hours: 12, label: "+12h" },
-  { hours: 18, label: "+18h" },
-  { hours: 24, label: "+24h" },
+  { hours: 24, label: "+1d" },
+  { hours: 48, label: "+2d" },
+  { hours: 72, label: "+3d" },
+  { hours: 96, label: "+4d" },
+  { hours: 120, label: "+5d" },
+  { hours: 144, label: "+6d" },
+  { hours: 168, label: "+7d" },
 ]
 
 export function TimeSlider({ value, onChange }: DriftControlsProps) {
