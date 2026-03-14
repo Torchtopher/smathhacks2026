@@ -25,5 +25,5 @@ export interface TrashPoint {
   confidence: number
   detected_at: number
   boat_id: string
-  drift_path: DriftPoint[]
+  drift_path?: DriftPoint[]
 }

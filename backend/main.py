@@ -1,4 +1,5 @@
 import json
+import time
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query
@@ -6,6 +7,8 @@ from fastapi import FastAPI, HTTPException, Query
 from db import get_conn, init_db
 from models import (
     BoatPositionPointResponse,
+    BoatRegisterInput,
+    BoatRegisterResponse,
     BoatReport,
     BoatStateResponse,
     DetectionSaved,
@@ -33,6 +36,31 @@ def project_detection_to_geo(
     _ = boat_heading_deg
     _ = bbox
     return boat_lat, boat_lon
+
+
+@app.post("/api/boats/register")
+def register_boat(body: BoatRegisterInput) -> BoatRegisterResponse:
+    boat_id = str(uuid4())
+    api_key = str(uuid4())
+    created_at = time.time()
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO boats (id, name, weight_class, api_key, created_at)
+                VALUES (%s, %s, %s, %s, %s);
+                """,
+                (boat_id, body.name, body.weight_class, api_key, created_at),
+            )
+        conn.commit()
+
+    return BoatRegisterResponse(
+        boat_id=boat_id,
+        name=body.name,
+        weight_class=body.weight_class,
+        api_key=api_key,
+    )
 
 
 @app.post("/api/boats/report")
@@ -193,21 +221,31 @@ def get_boats() -> dict:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT boat_id, gps_lat, gps_lon, heading, timestamp
-                FROM boat_states
-                ORDER BY timestamp DESC;
+                SELECT
+                    bs.boat_id,
+                    bs.gps_lat,
+                    bs.gps_lon,
+                    bs.heading,
+                    bs.timestamp,
+                    b.name,
+                    b.weight_class
+                FROM boat_states bs
+                LEFT JOIN boats b ON bs.boat_id = b.id
+                ORDER BY bs.timestamp DESC;
                 """
             )
             rows = cur.fetchall()
 
     boats = [
-        BoatStateResponse(
-            boat_id=row[0],
-            gps_lat=row[1],
-            gps_lon=row[2],
-            heading=row[3],
-            timestamp=row[4],
-        )
+        {
+            "boat_id": row[0],
+            "gps_lat": row[1],
+            "gps_lon": row[2],
+            "heading": row[3],
+            "timestamp": row[4],
+            "name": row[5] if row[5] else row[0],
+            "weight_class": row[6] if row[6] else "light",
+        }
         for row in rows
     ]
     return {"boats": boats}

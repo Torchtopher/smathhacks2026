@@ -1,16 +1,18 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Routes, Route } from "react-router"
 import { TopBar } from "@/components/top-bar"
 import { MapView } from "@/components/map-view"
 import { AnalyticsPage } from "@/components/analytics-page"
 import { AddBoatDialog } from "@/components/add-boat-dialog"
 import { BoatDetailSheet } from "@/components/boat-detail-sheet"
-import { demoBoats, demoTrash } from "@/lib/mock-data"
+import { api } from "@/lib/api"
 import type { BoatState, TrashPoint } from "@/types"
 
+const POLL_INTERVAL = 5_000
+
 function App() {
-  const [boats, setBoats] = useState<BoatState[]>(demoBoats)
-  const [trashPoints] = useState<TrashPoint[]>(demoTrash)
+  const [boats, setBoats] = useState<BoatState[]>([])
+  const [trashPoints, setTrashPoints] = useState<TrashPoint[]>([])
   const [timeHours, setTimeHours] = useState(0)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [selectedBoat, setSelectedBoat] = useState<BoatState | null>(null)
@@ -21,6 +23,22 @@ function App() {
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark)
   }, [dark])
+
+  const fetchData = useCallback(async () => {
+    try {
+      const [b, t] = await Promise.all([api.getBoats(), api.getTrash()])
+      setBoats(b)
+      setTrashPoints(t)
+    } catch (err) {
+      console.error("Failed to fetch data:", err)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchData()
+    const id = setInterval(fetchData, POLL_INTERVAL)
+    return () => clearInterval(id)
+  }, [fetchData])
 
   function addBoat(boat: BoatState) {
     setBoats((prev) => [...prev, boat])

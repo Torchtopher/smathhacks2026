@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
+import { api } from "@/lib/api"
 import type { BoatState } from "@/types"
 
 interface AddBoatDialogProps {
@@ -29,24 +30,37 @@ export function AddBoatDialog({ open, onOpenChange, onAdd }: AddBoatDialogProps)
   const [weightClass, setWeightClass] = useState<BoatState["weight_class"] | "">("")
   const [apiKey, setApiKey] = useState<string | null>(null)
 
-  function handleSubmit(e: React.FormEvent) {
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!name || !weightClass) return
 
-    const key = crypto.randomUUID()
-    const boat: BoatState = {
-      boat_id: crypto.randomUUID(),
-      name,
-      weight_class: weightClass as BoatState["weight_class"],
-      gps_lat: 44.2 + (Math.random() - 0.5) * 0.3,
-      gps_lon: -68.8 + (Math.random() - 0.5) * 0.3,
-      heading: Math.floor(Math.random() * 360),
-      timestamp: Date.now(),
-      api_key: key,
-    }
+    setSubmitting(true)
+    setError(null)
 
-    onAdd(boat)
-    setApiKey(key)
+    try {
+      const data = await api.registerBoat(name, weightClass)
+
+      const boat: BoatState = {
+        boat_id: data.boat_id,
+        name: data.name,
+        weight_class: data.weight_class as BoatState["weight_class"],
+        gps_lat: 0,
+        gps_lon: 0,
+        heading: 0,
+        timestamp: Date.now(),
+        api_key: data.api_key,
+      }
+
+      onAdd(boat)
+      setApiKey(data.api_key)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong")
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   function handleClose(isOpen: boolean) {
@@ -54,6 +68,7 @@ export function AddBoatDialog({ open, onOpenChange, onAdd }: AddBoatDialogProps)
       setName("")
       setWeightClass("")
       setApiKey(null)
+      setError(null)
     }
     onOpenChange(isOpen)
   }
@@ -115,8 +130,11 @@ export function AddBoatDialog({ open, onOpenChange, onAdd }: AddBoatDialogProps)
                 </SelectContent>
               </Select>
             </div>
-            <Button type="submit" className="w-full" disabled={!name || !weightClass}>
-              Register Boat
+            {error && (
+              <p className="text-sm text-destructive">{error}</p>
+            )}
+            <Button type="submit" className="w-full" disabled={!name || !weightClass || submitting}>
+              {submitting ? "Registering..." : "Register Boat"}
             </Button>
           </form>
         )}

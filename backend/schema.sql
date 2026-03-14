@@ -18,6 +18,14 @@ CREATE TABLE IF NOT EXISTS trash_detections (
     location GEOGRAPHY(POINT, 4326) NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS boats (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    weight_class TEXT NOT NULL,
+    api_key TEXT UNIQUE NOT NULL,
+    created_at DOUBLE PRECISION NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS boat_positions (
     id BIGSERIAL PRIMARY KEY,
     boat_id TEXT NOT NULL,

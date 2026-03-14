@@ -53,6 +53,17 @@ def init_db() -> None:
                 )
                 cur.execute(
                     """
+                    CREATE TABLE IF NOT EXISTS boats (
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        weight_class TEXT NOT NULL,
+                        api_key TEXT UNIQUE NOT NULL,
+                        created_at DOUBLE PRECISION NOT NULL
+                    );
+                    """
+                )
+                cur.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS boat_positions (
                         id BIGSERIAL PRIMARY KEY,
                         boat_id TEXT NOT NULL,
@@ -83,11 +94,12 @@ def init_db() -> None:
                     SELECT
                         to_regclass('public.boat_states') IS NOT NULL AS has_boat_states,
                         to_regclass('public.trash_detections') IS NOT NULL AS has_trash_detections,
-                        to_regclass('public.boat_positions') IS NOT NULL AS has_boat_positions;
+                        to_regclass('public.boat_positions') IS NOT NULL AS has_boat_positions,
+                        to_regclass('public.boats') IS NOT NULL AS has_boats;
                     """
                 )
-                has_boat_states, has_trash_detections, has_boat_positions = cur.fetchone()
-                if not (has_boat_states and has_trash_detections and has_boat_positions):
+                has_boat_states, has_trash_detections, has_boat_positions, has_boats = cur.fetchone()
+                if not (has_boat_states and has_trash_detections and has_boat_positions and has_boats):
                     raise RuntimeError(
                         "Database user lacks schema-create privileges and required tables are missing. "
                         "Run schema.sql using a privileged role, then restart the API."

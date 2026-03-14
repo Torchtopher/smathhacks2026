@@ -57,7 +57,7 @@ export function TrashLayer({ trashPoints, timeHours }: TrashLayerProps) {
 
       {timeHours > 0 &&
         trashPoints.map((tp) => {
-          const visible = tp.drift_path.filter(
+          const visible = (tp.drift_path ?? []).filter(
             (d) => d.time_offset_hours <= timeHours
           )
           if (visible.length < 2) return null

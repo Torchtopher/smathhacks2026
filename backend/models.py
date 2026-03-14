@@ -16,6 +16,18 @@ class BoatReport(BaseModel):
     detections: list[DetectionInput] = Field(default_factory=list)
 
 
+class BoatRegisterInput(BaseModel):
+    name: str
+    weight_class: str
+
+
+class BoatRegisterResponse(BaseModel):
+    boat_id: str
+    name: str
+    weight_class: str
+    api_key: str
+
+
 class DetectionSaved(BaseModel):
     id: str
     boat_id: str
