@@ -40,10 +40,6 @@ function App() {
     return () => clearInterval(id)
   }, [fetchData])
 
-  function addBoat(boat: BoatState) {
-    setBoats((prev) => [...prev, boat])
-  }
-
   return (
     <div className="flex flex-col h-screen">
       <TopBar onAddBoat={() => setDialogOpen(true)} dark={dark} onToggleDark={() => setDark(!dark)} />
@@ -63,7 +59,7 @@ function App() {
           <AnalyticsPage boats={boats} trashPoints={trashPoints} />
         } />
       </Routes>
-      <AddBoatDialog open={dialogOpen} onOpenChange={setDialogOpen} onAdd={addBoat} />
+      <AddBoatDialog open={dialogOpen} onOpenChange={setDialogOpen} />
       <BoatDetailSheet boat={selectedBoat} onOpenChange={(open) => { if (!open) setSelectedBoat(null) }} />
     </div>
   )

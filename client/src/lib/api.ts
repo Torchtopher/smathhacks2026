@@ -27,14 +27,14 @@ export const api = {
         gps_lon: number
         heading: number
         timestamp: number
-        name?: string
-        weight_class?: string
+        name: string
+        weight_class: string
       }[]
     }>("/api/boats")
     return data.boats.map((b) => ({
       boat_id: b.boat_id,
-      name: b.name ?? b.boat_id,
-      weight_class: (b.weight_class ?? "light") as BoatState["weight_class"],
+      name: b.name,
+      weight_class: b.weight_class as BoatState["weight_class"],
       gps_lat: b.gps_lat,
       gps_lon: b.gps_lon,
       heading: b.heading,

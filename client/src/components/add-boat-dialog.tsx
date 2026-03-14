@@ -22,14 +22,14 @@ import type { BoatState } from "@/types"
 interface AddBoatDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onAdd: (boat: BoatState) => void
 }
 
-export function AddBoatDialog({ open, onOpenChange, onAdd }: AddBoatDialogProps) {
+export function AddBoatDialog({ open, onOpenChange }: AddBoatDialogProps) {
   const [name, setName] = useState("")
   const [weightClass, setWeightClass] = useState<BoatState["weight_class"] | "">("")
   const [apiKey, setApiKey] = useState<string | null>(null)
 
+  const [copied, setCopied] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -43,18 +43,6 @@ export function AddBoatDialog({ open, onOpenChange, onAdd }: AddBoatDialogProps)
     try {
       const data = await api.registerBoat(name, weightClass)
 
-      const boat: BoatState = {
-        boat_id: data.boat_id,
-        name: data.name,
-        weight_class: data.weight_class as BoatState["weight_class"],
-        gps_lat: 0,
-        gps_lon: 0,
-        heading: 0,
-        timestamp: Date.now(),
-        api_key: data.api_key,
-      }
-
-      onAdd(boat)
       setApiKey(data.api_key)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong")
@@ -93,9 +81,13 @@ export function AddBoatDialog({ open, onOpenChange, onAdd }: AddBoatDialogProps)
                 <Input readOnly value={apiKey} className="font-mono text-sm" />
                 <Button
                   variant="secondary"
-                  onClick={() => navigator.clipboard.writeText(apiKey)}
+                  onClick={() => {
+                    navigator.clipboard.writeText(apiKey)
+                    setCopied(true)
+                    setTimeout(() => setCopied(false), 2000)
+                  }}
                 >
-                  Copy
+                  {copied ? "Copied!" : "Copy"}
                 </Button>
               </div>
               <p className="text-sm text-muted-foreground">
