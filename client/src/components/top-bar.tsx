@@ -1,18 +1,25 @@
 import { Button } from "@/components/ui/button"
-import { Waves } from "lucide-react"
+import { Waves, Sun, Moon } from "lucide-react"
 
 interface TopBarProps {
   onAddBoat: () => void
+  dark: boolean
+  onToggleDark: () => void
 }
 
-export function TopBar({ onAddBoat }: TopBarProps) {
+export function TopBar({ onAddBoat, dark, onToggleDark }: TopBarProps) {
   return (
-    <div className="flex items-center justify-between px-4 py-3 bg-card border-b border-border">
+    <div className="flex items-center justify-between px-4 py-3 bg-card border-border">
       <div className="flex items-center gap-2 text-foreground">
-        <Waves className="h-6 w-6 text-primary" />
+        <Waves className="h-6 w-6 text-primary dark:text-white" />
         <span className="text-lg font-semibold">OceanSight</span>
       </div>
-      <Button onClick={onAddBoat}>Add Your Boat</Button>
+      <div className="flex items-center gap-2">
+        <Button variant="ghost" size="icon" onClick={onToggleDark}>
+          {dark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+        </Button>
+        <Button onClick={onAddBoat}>Add Your Boat</Button>
+      </div>
     </div>
   )
 }

@@ -29,7 +29,7 @@ export function AddBoatDialog({ open, onOpenChange, onAdd }: AddBoatDialogProps)
   const [weightClass, setWeightClass] = useState<BoatState["weight_class"] | "">("")
   const [apiKey, setApiKey] = useState<string | null>(null)
 
-  function handleSubmit(e) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!name || !weightClass) return
 
