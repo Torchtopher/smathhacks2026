@@ -64,6 +64,31 @@ def to_float_list(value: np.ndarray) -> list[float]:
     return [float(x) for x in arr.tolist()]
 
 
+def build_forward_command(buffer_shape: tuple[int, ...]) -> np.ndarray:
+    forward = float(os.getenv("FORWARD_THRUST", "200.0"))
+    # For 2-thruster surface vessel, this is differential thrust:
+    # left = forward - diff, right = forward + diff.
+    diff = float(os.getenv("FORWARD_DIFF", os.getenv("FORWARD_TURN", "0.0")))
+    command = np.zeros(buffer_shape, dtype=np.float32)
+    flat = command.reshape(-1)
+    action_size = int(flat.size)
+
+    # Common vehicle layouts:
+    # - 2 actions (SurfaceVessel scheme 0): [left_thruster, right_thruster]
+    # - 4+ actions: first 4 are drive/propulsion channels
+    if action_size == 1:
+        flat[0] = forward
+    elif action_size == 2:
+        flat[0] = forward - diff
+        flat[1] = forward + diff
+    elif action_size >= 4:
+        flat[:4] = forward
+    else:
+        flat[:] = forward
+
+    return command
+
+
 @dataclass
 class FrameData:
     jpeg: Optional[bytes] = None
@@ -144,25 +169,35 @@ class HoloOceanViewportService:
                 tick = 0
                 logged_frame_shape = False
 
-                # Keep the agent still by repeatedly sending a zero command.
-                zero_command = None
+                # Keep the agent moving forward by repeatedly sending a forward command.
+                forward_command = None
                 should_send_command = True
                 try:
-                    action_size = int(np.prod(agent.action_space.buffer_shape))
-                    zero_command = np.zeros(action_size, dtype=np.float32)
+                    buffer_shape = tuple(agent.action_space.buffer_shape)
+                    forward_command = build_forward_command(buffer_shape)
+                    logger.info(
+                        "Motion command shape=%s command=%s",
+                        buffer_shape,
+                        np.asarray(forward_command).reshape(-1).tolist(),
+                    )
                 except Exception:
                     should_send_command = False
-                    logger.warning("Could not infer action size; skipping zero-command control")
+                    logger.warning("Could not infer action size; skipping motion control")
 
                 missing_viewport_ticks = 0
                 max_missing_viewport_ticks = int(os.getenv("MAX_MISSING_VIEWPORT_TICKS", "300"))
                 has_seen_viewport_frame = False
 
                 while not self._stop_event.is_set():
-                    if should_send_command and act_agent_name is not None and zero_command is not None:
+                    if (
+                        should_send_command
+                        and act_agent_name is not None
+                        and forward_command is not None
+                    ):
                         try:
-                            env.act(act_agent_name, zero_command)
+                            env.act(act_agent_name, forward_command)
                         except Exception:
+                            logger.exception("env.act failed; disabling motion control")
                             should_send_command = False
 
                     state = env.tick()
@@ -270,7 +305,7 @@ VIEWPORT_SENSOR_NAME = os.getenv("VIEWPORT_SENSOR_NAME", "ViewportCapture")
 VIEWPORT_WIDTH = int(os.getenv("VIEWPORT_WIDTH", "1280"))
 VIEWPORT_HEIGHT = int(os.getenv("VIEWPORT_HEIGHT", "720"))
 HOLOOCEAN_VERBOSE = env_bool("HOLOOCEAN_VERBOSE", False)
-HOLOOCEAN_SHOW_VIEWPORT = env_bool("HOLOOCEAN_SHOW_VIEWPORT", False)
+HOLOOCEAN_SHOW_VIEWPORT = env_bool("HOLOOCEAN_SHOW_VIEWPORT", True)
 JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "90"))
 
 viewport_service = HoloOceanViewportService(

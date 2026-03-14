@@ -2,13 +2,13 @@ import argparse
 
 import cv2
 import holoocean
-import numpy as np
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Live ViewportCapture viewer for HoloOcean.")
     parser.add_argument("--scenario", default="OpenWater-HoveringCamera")
     parser.add_argument("--sensor", default="ViewportCapture")
+
+    # VERY IMPORTANT, MUST 1000% MATCH THE CONFIG SIZE, IF NOT YOU ARE COOKED, OUT OF BOUNDS READ
     parser.add_argument("--width", type=int, default=1280)
     parser.add_argument("--height", type=int, default=720)
     parser.add_argument(
@@ -16,12 +16,13 @@ def main() -> None:
         action="store_true",
         help="Show native HoloOcean viewport window (can introduce resize tearing).",
     )
+    parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
-
     with holoocean.make(
         scenario_name=args.scenario,
         window_res=(args.height, args.width),
         show_viewport=args.show_viewport,
+        verbose=args.verbose,
     ) as env:
         cv2.namedWindow("ViewportCapture", cv2.WINDOW_NORMAL)
         print(
