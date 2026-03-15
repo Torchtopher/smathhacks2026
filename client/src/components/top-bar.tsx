@@ -6,9 +6,10 @@ interface TopBarProps {
   onAddBoat: () => void
   dark: boolean
   onToggleDark: () => void
+  connected: boolean | null
 }
 
-export function TopBar({ onAddBoat, dark, onToggleDark }: TopBarProps) {
+export function TopBar({ onAddBoat, dark, onToggleDark, connected }: TopBarProps) {
   const linkClass = ({ isActive }: { isActive: boolean }) =>
     `px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
       isActive
@@ -28,7 +29,25 @@ export function TopBar({ onAddBoat, dark, onToggleDark }: TopBarProps) {
           <NavLink to="/analytics" className={linkClass}>Analytics</NavLink>
         </nav>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1.5 text-xs">
+          <span
+            className={`inline-block h-2 w-2 rounded-full ${
+              connected === true
+                ? "bg-green-500"
+                : connected === false
+                  ? "bg-red-500"
+                  : "bg-gray-400"
+            }`}
+          />
+          <span className="text-muted-foreground">
+            {connected === true
+              ? "Connected"
+              : connected === false
+                ? "Disconnected"
+                : "Connecting\u2026"}
+          </span>
+        </div>
         <Button variant="ghost" size="icon" onClick={onToggleDark}>
           {dark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
         </Button>

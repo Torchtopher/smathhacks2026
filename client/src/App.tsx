@@ -16,6 +16,7 @@ function App() {
   const [timeHours, setTimeHours] = useState(0)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [selectedBoat, setSelectedBoat] = useState<BoatState | null>(null)
+  const [connected, setConnected] = useState<boolean | null>(null)
   const [dark, setDark] = useState(
     () => document.documentElement.classList.contains("dark")
   )
@@ -25,8 +26,15 @@ function App() {
   }, [dark])
 
   const fetchData = useCallback(async () => {
-    api.getBoats().then(setBoats).catch((err) => console.error("Failed to fetch boats:", err))
-    api.getTrash().then(setTrashPoints).catch((err) => console.error("Failed to fetch trash:", err))
+    try {
+      const [b, t] = await Promise.all([api.getBoats(), api.getTrash()])
+      setBoats(b)
+      setTrashPoints(t)
+      setConnected(true)
+    } catch (err) {
+      console.error("Failed to fetch data:", err)
+      setConnected(false)
+    }
   }, [])
 
   useEffect(() => {
@@ -37,7 +45,7 @@ function App() {
 
   return (
     <div className="flex flex-col h-screen">
-      <TopBar onAddBoat={() => setDialogOpen(true)} dark={dark} onToggleDark={() => setDark(!dark)} />
+      <TopBar onAddBoat={() => setDialogOpen(true)} dark={dark} onToggleDark={() => setDark(!dark)} connected={connected} />
       <Routes>
         <Route path="/" element={
           <MapView

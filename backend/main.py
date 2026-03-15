@@ -12,7 +12,6 @@ from models import (
     BoatRegisterInput,
     BoatRegisterResponse,
     BoatReport,
-    BoatStateResponse,
     DetectionSaved,
     TrashPointResponse,
 )
