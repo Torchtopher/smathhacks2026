@@ -2,6 +2,7 @@ import { useState, useMemo } from "react"
 import { MapContainer, TileLayer, ScaleControl } from "react-leaflet"
 import { BoatMarkers } from "@/components/boat-markers"
 import { DetectionLayer } from "@/components/detection-layer"
+import { LayerToggles } from "@/components/layer-toggles"
 import { StatsOverlay } from "@/components/stats-overlay"
 import { TimeSlider } from "@/components/time-slider"
 import type { BoatState, Detection } from "@/types"
@@ -15,6 +16,10 @@ interface MapViewProps {
   selectedBoatId: string | null
   onBoatClick: (boat: BoatState) => void
   detections: Detection[]
+  showBoats: boolean
+  showDetections: boolean
+  onToggleBoats: () => void
+  onToggleDetections: () => void
   timeHours: number
   onTimeChange: (hours: number) => void
   dark: boolean
@@ -25,6 +30,10 @@ export function MapView({
   selectedBoatId,
   onBoatClick,
   detections,
+  showBoats,
+  showDetections,
+  onToggleBoats,
+  onToggleDetections,
   timeHours,
   onTimeChange,
   dark,
@@ -43,15 +52,20 @@ export function MapView({
         zoom={4}
         className="absolute inset-0 w-full h-full"
       >
-        <TileLayer
-          key={dark ? "dark" : "light"}
+          <TileLayer
+            key={dark ? "dark" : "light"}
           url={dark ? TILE_DARK : TILE_LIGHT}
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-        />
-        <ScaleControl position="bottomright" />
-        <BoatMarkers boats={boats} selectedBoatId={selectedBoatId} onBoatClick={onBoatClick} dark={dark} />
-        <DetectionLayer detections={filteredDetections} timeHours={timeHours} />
-      </MapContainer>
+          />
+          <ScaleControl position="bottomright" />
+          {showBoats ? (
+            <BoatMarkers boats={boats} selectedBoatId={selectedBoatId} onBoatClick={onBoatClick} dark={dark} />
+          ) : null}
+          {showDetections ? (
+            <DetectionLayer detections={filteredDetections} timeHours={timeHours} />
+          ) : null}
+        </MapContainer>
+      <LayerToggles showBoats={showBoats} showDetections={showDetections} onToggleBoats={onToggleBoats} onToggleDetections={onToggleDetections} />
       <StatsOverlay boatCount={boats.length} detections={detections} hoveredLabel={hoveredLabel} onHoverLabel={setHoveredLabel} />
       <TimeSlider value={timeHours} onChange={onTimeChange} />
     </div>

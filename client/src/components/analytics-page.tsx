@@ -331,7 +331,7 @@ export function AnalyticsPage({ boats, detections }: AnalyticsPageProps) {
 
         <Card className="md:col-span-2">
           <CardHeader>
-            <CardTitle>Hackathon CSV Exports</CardTitle>
+            <CardTitle>CSV Exports</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap gap-2">

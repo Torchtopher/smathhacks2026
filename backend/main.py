@@ -373,7 +373,7 @@ def report_boat(report: BoatReport) -> dict:
                 detection_id = str(uuid4())
 
                 drift_path: list[dict] = []
-                if det.label in ("net", "turtle"):
+                if det.label in ("trash", "net"):
                     try:
                         drift_path = predict_drift_days(
                             detected_at=report.timestamp,

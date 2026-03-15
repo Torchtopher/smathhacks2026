@@ -14,6 +14,8 @@ const POLL_INTERVAL = 5_000
 function App() {
   const [boats, setBoats] = useState<BoatState[]>([])
   const [detections, setDetections] = useState<Detection[]>([])
+  const [showBoats, setShowBoats] = useState(true)
+  const [showDetections, setShowDetections] = useState(true)
   const [timeHours, setTimeHours] = useState(0)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [selectedBoatId, setSelectedBoatId] = useState<string | null>(null)
@@ -63,6 +65,10 @@ function App() {
             selectedBoatId={selectedBoatId}
             onBoatClick={(boat) => setSelectedBoatId(boat.boat_id)}
             detections={detections}
+            showBoats={showBoats}
+            showDetections={showDetections}
+            onToggleBoats={() => setShowBoats((value) => !value)}
+            onToggleDetections={() => setShowDetections((value) => !value)}
             timeHours={timeHours}
             onTimeChange={setTimeHours}
             dark={dark}
