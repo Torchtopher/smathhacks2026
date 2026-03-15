@@ -1,0 +1,8 @@
+names:
+  0: dolphin
+  1: trash
+  2: turtle
+  3: net
+path: /home/evank/code/ncssm/classify/dataset
+train: images/train
+val: images/train

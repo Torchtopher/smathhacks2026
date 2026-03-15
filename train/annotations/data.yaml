@@ -1,0 +1,7 @@
+names:
+  0: dolphin
+  1: trash
+  2: turtle
+  3: net
+path: .
+train: train.txt
