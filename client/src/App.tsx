@@ -27,8 +27,14 @@ function App() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [b, t] = await Promise.all([api.getBoats(), api.getTrash()])
-      setBoats(b)
+      const [b, t, h] = await Promise.all([api.getBoats(), api.getTrash(), api.getBoatHistory()])
+      const trails = new Map<string, [number, number][]>()
+      for (const p of h.points) {
+        let arr = trails.get(p.boat_id)
+        if (!arr) { arr = []; trails.set(p.boat_id, arr) }
+        arr.push([p.gps_lat, p.gps_lon])
+      }
+      setBoats(b.map(boat => ({ ...boat, trail: trails.get(boat.boat_id) })))
       setTrashPoints(t)
       setConnected(true)
     } catch (err) {

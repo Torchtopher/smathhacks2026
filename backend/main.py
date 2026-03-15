@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 import time
@@ -6,6 +7,7 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Query
 
 from db import get_conn, init_db
+from detector import detect
 from drift_predictor import predict_drift_days
 from models import (
     BoatPositionPointResponse,
@@ -109,7 +111,15 @@ def report_boat(report: BoatReport) -> dict:
                 (report.timestamp - POSITION_HISTORY_RETENTION_SECONDS,),
             )
 
-            for det in report.detections:
+            detections = []
+            if report.image:
+                try:
+                    image_bytes = base64.b64decode(report.image)
+                    detections = detect(image_bytes)
+                except Exception:
+                    logger.exception("Failed to decode/detect image for boat %s", report.boat_id)
+
+            for det in detections:
                 projected_lat, projected_lon = project_detection_to_geo(
                     boat_lat=report.gps_lat,
                     boat_lon=report.gps_lon,

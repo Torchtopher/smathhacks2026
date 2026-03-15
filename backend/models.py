@@ -12,7 +12,7 @@ class BoatReport(BaseModel):
     gps_lat: float
     gps_lon: float
     heading: float
-    detections: list[DetectionInput] = Field(default_factory=list)
+    image: str = ""
 
 
 class BoatRegisterInput(BaseModel):

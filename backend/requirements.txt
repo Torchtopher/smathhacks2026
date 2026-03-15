@@ -3,3 +3,5 @@ uvicorn>=0.30.0
 psycopg[binary]>=3.2.0
 pydantic>=2.7.0
 opendrift>=1.14.8
+ultralytics>=8.4.22
+opencv-python>=4.13.0.92
