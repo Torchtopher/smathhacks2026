@@ -22,7 +22,7 @@ export function TopBar({ onAddBoat, dark, onToggleDark, connected }: TopBarProps
       <div className="flex items-center gap-6">
         <div className="flex items-center gap-2 text-foreground">
           <Waves className="h-6 w-6 text-primary dark:text-white" />
-          <span className="text-lg font-semibold">OceanSight</span>
+          <span className="text-lg font-semibold">Okeanos</span>
         </div>
         <nav className="flex items-center gap-1">
           <NavLink to="/" end className={linkClass}>Map</NavLink>
