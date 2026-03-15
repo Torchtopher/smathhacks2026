@@ -38,8 +38,15 @@ GPS_ORIGIN_PRESETS: dict[str, tuple[float, float, str]] = {
 }
 
 
-def fetch_latest_frame(api_base: str, wait_ms: int = 5000) -> dict[str, Any]:
-    query = urlencode({"wait_ms": wait_ms, "include_image": "true"})
+def fetch_latest_frame(
+    api_base: str,
+    wait_ms: int = 5000,
+    agent_index: int | None = -1,
+) -> dict[str, Any]:
+    query_params: dict[str, Any] = {"wait_ms": wait_ms, "include_image": "true"}
+    if agent_index is not None:
+        query_params["agent_index"] = agent_index
+    query = urlencode(query_params)
     url = f"{api_base.rstrip('/')}/latest?{query}"
 
     try:
@@ -241,6 +248,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="How long to wait for a frame from HoloOcean (default: 5000)",
     )
     parser.add_argument(
+        "--agent-index",
+        type=int,
+        default=-1,
+        help=(
+            "HoloOcean agent index for viewport targeting. "
+            "Use -1 to avoid moving viewport (default: -1)."
+        ),
+    )
+    parser.add_argument(
         "--output-image",
         default=str(DEFAULT_OUTPUT_IMAGE),
         help=f"Where to save the fetched image (default: {DEFAULT_OUTPUT_IMAGE})",
@@ -275,7 +291,11 @@ def run_once(
     gps_origin_lon: float,
     gps_origin_label: str,
 ) -> tuple[dict[str, Any], str | None]:
-    frame = fetch_latest_frame(args.api_base, wait_ms=args.wait_ms)
+    frame = fetch_latest_frame(
+        args.api_base,
+        wait_ms=args.wait_ms,
+        agent_index=args.agent_index,
+    )
     debug(
         "Fetched frame "
         f"tick={frame.get('tick')} image_key={frame.get('image_key')} "
@@ -358,6 +378,7 @@ def main() -> None:
     debug(
         f"Client starting backend_baseloop={args.loop} interval_seconds={args.interval_seconds} "
         f"backend_base={args.backend_base or 'none'} "
+        f"agent_index={args.agent_index} "
         f"gps_origin_preset={args.gps_origin_preset} "
         f"gps_origin=({gps_origin_lat:.6f},{gps_origin_lon:.6f})"
     )

@@ -16,11 +16,14 @@ function App() {
   const [trashPoints, setTrashPoints] = useState<TrashPoint[]>([])
   const [timeHours, setTimeHours] = useState(0)
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [selectedBoat, setSelectedBoat] = useState<BoatState | null>(null)
+  const [selectedBoatId, setSelectedBoatId] = useState<string | null>(null)
   const [connected, setConnected] = useState<boolean | null>(null)
   const [dark, setDark] = useState(
     () => document.documentElement.classList.contains("dark")
   )
+  const selectedBoat = selectedBoatId
+    ? boats.find((boat) => boat.boat_id === selectedBoatId) ?? null
+    : null
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark)
@@ -57,8 +60,8 @@ function App() {
         <Route path="/" element={
           <MapView
             boats={boats}
-            selectedBoatId={selectedBoat?.boat_id ?? null}
-            onBoatClick={setSelectedBoat}
+            selectedBoatId={selectedBoatId}
+            onBoatClick={(boat) => setSelectedBoatId(boat.boat_id)}
             trashPoints={trashPoints}
             timeHours={timeHours}
             onTimeChange={setTimeHours}
@@ -73,7 +76,12 @@ function App() {
         } />
       </Routes>
       <AddBoatDialog open={dialogOpen} onOpenChange={setDialogOpen} />
-      <BoatDetailSheet boat={selectedBoat} onOpenChange={(open) => { if (!open) setSelectedBoat(null) }} />
+      <BoatDetailSheet
+        boat={selectedBoat}
+        onOpenChange={(open) => {
+          if (!open) setSelectedBoatId(null)
+        }}
+      />
     </div>
   )
 }

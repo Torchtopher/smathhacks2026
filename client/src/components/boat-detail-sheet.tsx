@@ -54,7 +54,7 @@ export function BoatDetailSheet({ boat, onOpenChange }: BoatDetailSheetProps) {
                   >
                     <img
                       src={boat.image}
-                      alt={`Latest sighting from ${boat.name}`}
+                      alt={`Latest image from ${boat.name}`}
                       className="w-full h-48 object-cover cursor-zoom-in"
                     />
                     <div className="mt-1 text-xs text-muted-foreground">Click image to open fullscreen</div>
@@ -80,13 +80,13 @@ export function BoatDetailSheet({ boat, onOpenChange }: BoatDetailSheetProps) {
             <Dialog open={imageOpen} onOpenChange={setImageOpen}>
               <DialogContent className="w-[98vw] h-[96vh] max-w-[98vw] sm:max-w-[98vw] p-3 gap-3">
                 <DialogHeader>
-                  <DialogTitle>{boat.name} - Latest Detection Image</DialogTitle>
+                  <DialogTitle>{boat.name} - Latest Image</DialogTitle>
                 </DialogHeader>
                 {boat.image && (
                   <div className="flex-1 min-h-0 overflow-hidden rounded-md bg-black/80">
                     <img
                       src={boat.image}
-                      alt={`Latest detection image for ${boat.name}`}
+                      alt={`Latest image for ${boat.name}`}
                       className="w-full h-full object-contain"
                     />
                   </div>

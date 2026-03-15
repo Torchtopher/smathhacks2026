@@ -236,8 +236,10 @@ class HoloOceanViewportService:
         self._requested_viewport_agent_index: Optional[int] = None
 
     def _validate_agent_index_locked(self, agent_index: int) -> None:
-        if agent_index < 0:
-            raise ValueError("agent_index must be >= 0")
+        if agent_index < -1:
+            raise ValueError("agent_index must be -1 or >= 0")
+        if agent_index == -1:
+            return
         if self._agent_names and agent_index >= len(self._agent_names):
             raise ValueError(
                 f"agent_index {agent_index} is out of range for {len(self._agent_names)} agents"
@@ -414,12 +416,12 @@ class HoloOceanViewportService:
 
                     with self._ready:
                         requested_viewport_agent_index = self._requested_viewport_agent_index
+                    if requested_viewport_agent_index == -1:
+                        requested_viewport_agent_index = None
                     requested_viewport_agent_name = None
                     target_pose_key = None
                     target_pose = None
                     if requested_viewport_agent_index is not None:
-                        if requested_viewport_agent_index < 0:
-                            requested_viewport_agent_index = 0
                         if requested_viewport_agent_index >= len(agent_names):
                             requested_viewport_agent_index = len(agent_names) - 1
                         requested_viewport_agent_name = agent_names[requested_viewport_agent_index]
@@ -596,6 +598,7 @@ class HoloOceanViewportService:
                     self._ready.wait(timeout=remaining)
                 while (
                     agent_index is not None
+                    and agent_index >= 0
                     and self._frame.error is None
                     and self._frame.jpeg is not None
                     and self._frame.viewport_agent_index != agent_index
@@ -723,7 +726,7 @@ def latest_jpg(wait_ms: int = 0, agent_index: Optional[int] = None):
         raise HTTPException(status_code=500, detail=frame.error)
     if frame.jpeg is None:
         raise HTTPException(status_code=503, detail="No frame available yet")
-    if agent_index is not None and frame.viewport_agent_index != agent_index:
+    if agent_index is not None and agent_index >= 0 and frame.viewport_agent_index != agent_index:
         raise HTTPException(
             status_code=503,
             detail=(
@@ -780,7 +783,7 @@ def latest(wait_ms: int = 0, include_image: bool = False, agent_index: Optional[
         raise HTTPException(status_code=500, detail=frame.error)
     if frame.jpeg is None:
         raise HTTPException(status_code=503, detail="No frame available yet")
-    if agent_index is not None and frame.viewport_agent_index != agent_index:
+    if agent_index is not None and agent_index >= 0 and frame.viewport_agent_index != agent_index:
         raise HTTPException(
             status_code=503,
             detail=(
