@@ -323,14 +323,15 @@ class HoloOceanViewportService:
                 has_seen_viewport_frame = False
                 with self._ready:
                     self._agent_names = list(agent_names)
-                    if self._requested_viewport_agent_index is None:
-                        self._requested_viewport_agent_index = 0
-                    elif self._requested_viewport_agent_index >= len(agent_names):
+                    if (
+                        self._requested_viewport_agent_index is not None
+                        and self._requested_viewport_agent_index >= len(agent_names)
+                    ):
                         logger.warning(
-                            "Requested viewport agent index %s is out of range; using 0",
+                            "Requested viewport agent index %s is out of range; clearing request",
                             self._requested_viewport_agent_index,
                         )
-                        self._requested_viewport_agent_index = 0
+                        self._requested_viewport_agent_index = None
                     self._ready.notify_all()
 
                 while not self._stop_event.is_set():
@@ -350,46 +351,51 @@ class HoloOceanViewportService:
 
                     with self._ready:
                         requested_viewport_agent_index = self._requested_viewport_agent_index
-                    if requested_viewport_agent_index is None:
-                        requested_viewport_agent_index = 0
-                    if requested_viewport_agent_index < 0:
-                        requested_viewport_agent_index = 0
-                    if requested_viewport_agent_index >= len(agent_names):
-                        requested_viewport_agent_index = len(agent_names) - 1
-                    requested_viewport_agent_name = agent_names[requested_viewport_agent_index]
-
-                    target_agent_state = get_agent_sensor_state(
-                        state, requested_viewport_agent_name
-                    )
-                    target_pose_key = find_pose_key(target_agent_state, self.pose_sensor_name)
+                    requested_viewport_agent_name = None
+                    target_pose_key = None
                     target_pose = None
-                    if target_pose_key is not None and target_pose_key in target_agent_state:
-                        target_pose = as_pose_matrix(target_agent_state[target_pose_key])
+                    if requested_viewport_agent_index is not None:
+                        if requested_viewport_agent_index < 0:
+                            requested_viewport_agent_index = 0
+                        if requested_viewport_agent_index >= len(agent_names):
+                            requested_viewport_agent_index = len(agent_names) - 1
+                        requested_viewport_agent_name = agent_names[requested_viewport_agent_index]
 
-                    if requested_viewport_agent_index != active_viewport_agent_index:
-                        active_viewport_agent_index = requested_viewport_agent_index
-                        active_viewport_agent_name = requested_viewport_agent_name
-                        remaining_settle_ticks = viewport_switch_settle_ticks
-                        logger.info(
-                            "Viewport target agent changed to '%s' (index=%d)",
-                            active_viewport_agent_name,
-                            active_viewport_agent_index,
+                        target_agent_state = get_agent_sensor_state(
+                            state, requested_viewport_agent_name
                         )
+                        target_pose_key = find_pose_key(target_agent_state, self.pose_sensor_name)
+                        if target_pose_key is not None and target_pose_key in target_agent_state:
+                            target_pose = as_pose_matrix(target_agent_state[target_pose_key])
 
-                    if target_pose is not None:
-                        viewport_position = to_float_list(target_pose[:3, 3])
-                        roll, pitch, yaw = euler_zyx_deg_from_rotation(target_pose[:3, :3])
-                        try:
-                            env.move_viewport(
-                                viewport_position,
-                                [float(roll), float(pitch), float(yaw)],
+                        if requested_viewport_agent_index != active_viewport_agent_index:
+                            active_viewport_agent_index = requested_viewport_agent_index
+                            active_viewport_agent_name = requested_viewport_agent_name
+                            remaining_settle_ticks = viewport_switch_settle_ticks
+                            logger.info(
+                                "Viewport target agent changed to '%s' (index=%d)",
+                                active_viewport_agent_name,
+                                active_viewport_agent_index,
                             )
-                        except Exception:
-                            logger.exception(
-                                "move_viewport failed for agent '%s' (index=%d)",
-                                requested_viewport_agent_name,
-                                requested_viewport_agent_index,
-                            )
+
+                        if target_pose is not None:
+                            viewport_position = to_float_list(target_pose[:3, 3])
+                            roll, pitch, yaw = euler_zyx_deg_from_rotation(target_pose[:3, :3])
+                            try:
+                                env.move_viewport(
+                                    viewport_position,
+                                    [float(roll), float(pitch), float(yaw)],
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "move_viewport failed for agent '%s' (index=%d)",
+                                    requested_viewport_agent_name,
+                                    requested_viewport_agent_index,
+                                )
+                    else:
+                        active_viewport_agent_name = None
+                        active_viewport_agent_index = None
+                        remaining_settle_ticks = 0
 
                     sensor_state, resolved_agent_name = select_agent_state(
                         state, capture_agent_name
@@ -518,40 +524,48 @@ class HoloOceanViewportService:
         deadline = time.time() + max(wait_ms, 0) / 1000.0
         if agent_index is not None:
             self.set_viewport_agent_index(agent_index)
-        with self._ready:
-            while self._frame.jpeg is None and self._frame.error is None:
-                remaining = deadline - time.time()
-                if wait_ms <= 0 or remaining <= 0:
-                    break
-                self._ready.wait(timeout=remaining)
-            while (
-                agent_index is not None
-                and self._frame.error is None
-                and self._frame.jpeg is not None
-                and self._frame.viewport_agent_index != agent_index
-            ):
-                remaining = deadline - time.time()
-                if wait_ms <= 0 or remaining <= 0:
-                    break
-                self._ready.wait(timeout=remaining)
-            return FrameData(
-                jpeg=self._frame.jpeg,
-                image_key=self._frame.image_key,
-                image_source=self._frame.image_source,
-                pose_key=self._frame.pose_key,
-                capture_agent_name=self._frame.capture_agent_name,
-                capture_agent_index=self._frame.capture_agent_index,
-                viewport_agent_name=self._frame.viewport_agent_name,
-                viewport_agent_index=self._frame.viewport_agent_index,
-                pose_matrix=self._frame.pose_matrix,
-                position=self._frame.position,
-                angles_deg=self._frame.angles_deg,
-                bearing_deg=self._frame.bearing_deg,
-                tick=self._frame.tick,
-                unix_time_s=self._frame.unix_time_s,
-                error=self._frame.error,
-                error_traceback=self._frame.error_traceback,
-            )
+        try:
+            with self._ready:
+                while self._frame.jpeg is None and self._frame.error is None:
+                    remaining = deadline - time.time()
+                    if wait_ms <= 0 or remaining <= 0:
+                        break
+                    self._ready.wait(timeout=remaining)
+                while (
+                    agent_index is not None
+                    and self._frame.error is None
+                    and self._frame.jpeg is not None
+                    and self._frame.viewport_agent_index != agent_index
+                ):
+                    remaining = deadline - time.time()
+                    if wait_ms <= 0 or remaining <= 0:
+                        break
+                    self._ready.wait(timeout=remaining)
+                return FrameData(
+                    jpeg=self._frame.jpeg,
+                    image_key=self._frame.image_key,
+                    image_source=self._frame.image_source,
+                    pose_key=self._frame.pose_key,
+                    capture_agent_name=self._frame.capture_agent_name,
+                    capture_agent_index=self._frame.capture_agent_index,
+                    viewport_agent_name=self._frame.viewport_agent_name,
+                    viewport_agent_index=self._frame.viewport_agent_index,
+                    pose_matrix=self._frame.pose_matrix,
+                    position=self._frame.position,
+                    angles_deg=self._frame.angles_deg,
+                    bearing_deg=self._frame.bearing_deg,
+                    tick=self._frame.tick,
+                    unix_time_s=self._frame.unix_time_s,
+                    error=self._frame.error,
+                    error_traceback=self._frame.error_traceback,
+                )
+        finally:
+            # agent_index targeting is one-shot so free camera control is not continuously overridden.
+            if agent_index is not None:
+                with self._ready:
+                    if self._requested_viewport_agent_index == agent_index:
+                        self._requested_viewport_agent_index = None
+                        self._ready.notify_all()
 
 
 # SCENARIO = os.getenv("HOLOOCEAN_SCENARIO", "OpenWater-HoveringCamera")
