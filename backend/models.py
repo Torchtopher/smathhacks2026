@@ -82,6 +82,12 @@ class BoatStateResponse(BaseModel):
     gps_lon: float
     heading: float
     timestamp: float
+    has_image: bool = False
+
+
+class BoatImageResponse(BaseModel):
+    boat_id: str
+    image: str | None = None
 
 
 class BoatPositionPointResponse(BaseModel):

@@ -7,7 +7,7 @@ from uuid import uuid4
 import cv2
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query
-from psycopg import errors
+from psycopg import errors, sql
 
 from db import get_conn, init_db
 from detector import detect
@@ -15,6 +15,7 @@ from drift_predictor import predict_drift_days
 from models import (
     BoatAdminCreateInput,
     BoatAdminDeleteResponse,
+    BoatImageResponse,
     BoatAdminResponse,
     BoatAdminUpdateInput,
     DetectionInput,
@@ -108,7 +109,9 @@ def annotate_image_with_detections(
                 cv2.LINE_AA,
             )
 
-        success, encoded = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+        success, encoded = cv2.imencode(
+            ".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 90]
+        )
         if not success:
             return image_payload
         return base64.b64encode(encoded.tobytes()).decode("ascii")
@@ -196,6 +199,9 @@ def admin_create_boat(body: BoatAdminCreateInput) -> BoatAdminResponse:
     except errors.UniqueViolation as exc:
         raise HTTPException(status_code=409, detail="boat_id already exists") from exc
 
+    if row is None:
+        raise RuntimeError("Failed to create boat")
+
     return BoatAdminResponse(
         boat_id=row[0],
         name=row[1],
@@ -263,7 +269,9 @@ def admin_delete_boat(
                 cur.execute("DELETE FROM boat_states WHERE boat_id = %s;", (boat_id,))
                 deleted_state_rows = cur.rowcount
 
-                cur.execute("DELETE FROM boat_positions WHERE boat_id = %s;", (boat_id,))
+                cur.execute(
+                    "DELETE FROM boat_positions WHERE boat_id = %s;", (boat_id,)
+                )
                 deleted_position_rows = cur.rowcount
 
                 cur.execute("DELETE FROM detections WHERE boat_id = %s;", (boat_id,))
@@ -346,10 +354,12 @@ def report_boat(report: BoatReport) -> dict:
                 image_bytes = base64.b64decode(image_payload)
                 s = time.perf_counter()
                 detections = detect(image_bytes)
-                print(f"End detect time {time.perf_counter()-s}")
+                print(f"End detect time {time.perf_counter() - s}")
                 print(f"Detections {detections}")
             except Exception:
-                logger.exception("Failed to decode/detect image for boat %s", report.boat_id)
+                logger.exception(
+                    "Failed to decode/detect image for boat %s", report.boat_id
+                )
             annotated_image_payload = annotate_image_with_detections(
                 image_payload=image_payload,
                 detections=detections,
@@ -382,7 +392,9 @@ def report_boat(report: BoatReport) -> dict:
                             days=7,
                         )
                     except (Exception, SystemExit):
-                        logger.exception("Failed drift prediction for detection id=%s", detection_id)
+                        logger.exception(
+                            "Failed drift prediction for detection id=%s", detection_id
+                        )
 
                 drift_path_json = json.dumps(drift_path) if drift_path else None
 
@@ -426,7 +438,11 @@ def report_boat(report: BoatReport) -> dict:
 
         conn.commit()
 
-    return {"boat_id": report.boat_id, "detections_saved": len(saved_detections), "detections": saved_detections}
+    return {
+        "boat_id": report.boat_id,
+        "detections_saved": len(saved_detections),
+        "detections": saved_detections,
+    }
 
 
 @app.get("/api/detections")
@@ -436,24 +452,39 @@ def get_detections(
     min_lon: float | None = Query(default=None),
     max_lon: float | None = Query(default=None),
     min_confidence: float = Query(default=0.0, ge=0.0, le=1.0),
+    since: float | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1, le=5000),
     drift_days: int = Query(default=1, ge=1, le=7),
+    include_drift: bool = Query(default=False),
 ) -> dict:
-    where_parts = ["confidence >= %s"]
-    params: list[float] = [min_confidence]
+    where_parts = [sql.SQL("confidence >= %s")]
+    params: list[object] = [min_confidence]
+
+    if since is not None:
+        where_parts.append(sql.SQL("detected_at >= %s"))
+        params.append(since)
 
     if None not in (min_lat, max_lat, min_lon, max_lon):
+        assert min_lat is not None
+        assert max_lat is not None
+        assert min_lon is not None
+        assert max_lon is not None
         where_parts.append(
-            """
+            sql.SQL("""
             ST_Intersects(
                 location::geometry,
                 ST_MakeEnvelope(%s, %s, %s, %s, 4326)
             )
-            """
+            """)
         )
         params.extend([min_lon, min_lat, max_lon, max_lat])
 
-    where_sql = " AND ".join(where_parts)
-    query = f"""
+    where_sql = sql.SQL(" AND ").join(where_parts)
+    select_drift_sql = (
+        sql.SQL("drift_path") if include_drift else sql.SQL("NULL::jsonb AS drift_path")
+    )
+    limit_sql = sql.SQL("LIMIT %s") if limit is not None else sql.SQL("")
+    query = sql.SQL("""
         SELECT
             id::text,
             boat_id,
@@ -461,12 +492,20 @@ def get_detections(
             detected_at,
             ST_Y(location::geometry) AS lat,
             ST_X(location::geometry) AS lon,
-            drift_path,
+            {select_drift_sql},
             label
         FROM detections
         WHERE {where_sql}
-        ORDER BY detected_at DESC;
-    """
+        ORDER BY detected_at DESC
+        {limit_sql}
+    """).format(
+        select_drift_sql=select_drift_sql,
+        where_sql=where_sql,
+        limit_sql=limit_sql,
+    )
+
+    if limit is not None:
+        params.append(limit)
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -506,7 +545,7 @@ def get_boats() -> dict:
                     bs.timestamp,
                     b.name,
                     b.weight_class,
-                    b.last_image
+                    b.last_image IS NOT NULL AS has_image
                 FROM boat_states bs
                 LEFT JOIN boats b ON bs.boat_id = b.id
                 ORDER BY bs.timestamp DESC;
@@ -523,11 +562,32 @@ def get_boats() -> dict:
             "timestamp": row[4],
             "name": row[5] if row[5] else row[0],
             "weight_class": row[6] if row[6] else "light",
-            "image": f"data:image/jpeg;base64,{row[7]}" if row[7] else None,
+            "has_image": bool(row[7]),
         }
         for row in rows
     ]
     return {"boats": boats}
+
+
+@app.get("/api/boats/{boat_id}/image")
+def get_boat_image(boat_id: str) -> BoatImageResponse:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT last_image
+                FROM boats
+                WHERE id = %s;
+                """,
+                (boat_id,),
+            )
+            row = cur.fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="boat not found")
+
+    image = f"data:image/jpeg;base64,{row[0]}" if row[0] else None
+    return BoatImageResponse(boat_id=boat_id, image=image)
 
 
 @app.get("/api/boats/history")
@@ -539,7 +599,11 @@ def get_boat_position_history(
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT COALESCE(MAX(timestamp), 0) FROM boat_states;")
-            latest_timestamp = cur.fetchone()[0]
+            latest_timestamp_row = cur.fetchone()
+            if latest_timestamp_row is None:
+                latest_timestamp = 0
+            else:
+                latest_timestamp = latest_timestamp_row[0]
             min_timestamp = latest_timestamp - (minutes * 60)
 
             if boat_id:
@@ -582,13 +646,18 @@ def get_stats() -> dict:
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM detections;")
-            total_detections = cur.fetchone()[0]
+            total_detections_row = cur.fetchone()
+            total_detections = total_detections_row[0] if total_detections_row else 0
 
             cur.execute("SELECT COUNT(*) FROM boat_states;")
-            active_boats = cur.fetchone()[0]
+            active_boats_row = cur.fetchone()
+            active_boats = active_boats_row[0] if active_boats_row else 0
 
             cur.execute("SELECT MAX(detected_at) FROM detections;")
-            last_detection_time = cur.fetchone()[0]
+            last_detection_time_row = cur.fetchone()
+            last_detection_time = (
+                last_detection_time_row[0] if last_detection_time_row else None
+            )
 
             cur.execute("SELECT label, COUNT(*) FROM detections GROUP BY label;")
             label_rows = cur.fetchall()
@@ -612,4 +681,6 @@ def health() -> dict:
                 _ = cur.fetchone()
         return {"ok": True}
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Database unhealthy: {exc}") from exc
+        raise HTTPException(
+            status_code=503, detail=f"Database unhealthy: {exc}"
+        ) from exc

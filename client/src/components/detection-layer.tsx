@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react"
 import L from "leaflet"
 import { Marker, Tooltip, Polyline, CircleMarker } from "react-leaflet"
 import MarkerClusterGroup from "react-leaflet-cluster"
@@ -7,6 +8,12 @@ import type { Detection } from "@/types"
 interface DetectionLayerProps {
   detections: Detection[]
   timeHours: number
+}
+
+interface VisibleDriftPath {
+  id: string
+  label: string
+  points: [number, number][]
 }
 
 function getLabelIcon(label: string) {
@@ -45,67 +52,81 @@ function timeAgo(ts: number) {
 
 function ageOpacity(detectedAt: number): number {
   const ageHours = (Date.now() - detectedAt * 1000) / 3600000
-  // Newer → 1.0, fades to 0.3 over 24 hours
   return Math.max(0.3, 1 - (ageHours / 24) * 0.7)
 }
 
-export function DetectionLayer({ detections, timeHours }: DetectionLayerProps) {
+const DetectionMarker = memo(function DetectionMarker({ tp }: { tp: Detection }) {
+  return (
+    <Marker
+      position={[tp.lat, tp.lon]}
+      icon={getCachedIcon(tp.label)}
+      opacity={ageOpacity(tp.detected_at)}
+    >
+      <Tooltip>
+        <div className="text-sm">
+          <div className="font-semibold">{LABEL_DISPLAY_NAMES[tp.label] ?? tp.label}</div>
+          <div>{(tp.confidence * 100).toFixed(0)}% confidence</div>
+          <div>{timeAgo(tp.detected_at)}</div>
+        </div>
+      </Tooltip>
+    </Marker>
+  )
+})
+
+const DriftPath = memo(function DriftPath({ path }: { path: VisibleDriftPath }) {
+  const last = path.points[path.points.length - 1]
+  const color = LABEL_COLORS[path.label] ?? LABEL_COLORS.trash
+  return (
+    <>
+      <Polyline
+        positions={path.points}
+        pathOptions={{
+          color,
+          weight: 2,
+          dashArray: "6 4",
+          opacity: 0.6,
+        }}
+      />
+      <CircleMarker
+        center={[last[0], last[1]]}
+        radius={5}
+        pathOptions={{
+          color,
+          fillColor: color,
+          fillOpacity: 0.4,
+          weight: 1,
+        }}
+      />
+    </>
+  )
+})
+
+export const DetectionLayer = memo(function DetectionLayer({ detections, timeHours }: DetectionLayerProps) {
+  const visibleDriftPaths = useMemo(() => {
+    if (timeHours <= 0) return [] as VisibleDriftPath[]
+
+    return detections.flatMap((tp) => {
+      const visible = (tp.drift_path ?? [])
+        .filter((point) => point.time_offset_hours <= timeHours)
+        .map((point) => [point.lat, point.lon] as [number, number])
+
+      return visible.length < 2
+        ? []
+        : [{ id: tp.id, label: tp.label, points: visible }]
+    })
+  }, [detections, timeHours])
+
   return (
     <>
       <MarkerClusterGroup iconCreateFunction={clusterIcon} chunkedLoading maxClusterRadius={40} disableClusteringAtZoom={18}>
-        {detections.map((tp) => {
-          const label = tp.label
-          return (
-            <Marker
-              key={tp.id}
-              position={[tp.lat, tp.lon]}
-              icon={getCachedIcon(label)}
-              opacity={ageOpacity(tp.detected_at)}
-            >
-              <Tooltip>
-                <div className="text-sm">
-                  <div className="font-semibold">{LABEL_DISPLAY_NAMES[label] ?? label}</div>
-                  <div>{(tp.confidence * 100).toFixed(0)}% confidence</div>
-                  <div>{timeAgo(tp.detected_at)}</div>
-                </div>
-              </Tooltip>
-            </Marker>
-          )
-        })}
+        {detections.map((tp) => (
+          <DetectionMarker key={tp.id} tp={tp} />
+        ))}
       </MarkerClusterGroup>
 
-      {timeHours > 0 &&
-        detections.map((tp) => {
-          const visible = (tp.drift_path ?? []).filter(
-            (d) => d.time_offset_hours <= timeHours
-          )
-          if (visible.length < 2) return null
-          const last = visible[visible.length - 1]
-          const color = LABEL_COLORS[tp.label] ?? LABEL_COLORS.trash
-          return (
-            <span key={`drift-${tp.id}`}>
-              <Polyline
-                positions={visible.map((d) => [d.lat, d.lon])}
-                pathOptions={{
-                  color,
-                  weight: 2,
-                  dashArray: "6 4",
-                  opacity: 0.6,
-                }}
-              />
-              <CircleMarker
-                center={[last.lat, last.lon]}
-                radius={5}
-                pathOptions={{
-                  color,
-                  fillColor: color,
-                  fillOpacity: 0.4,
-                  weight: 1,
-                }}
-              />
-            </span>
-          )
-        })}
+      {visibleDriftPaths.map((path) => (
+        <DriftPath key={`drift-${path.id}`} path={path} />
+      ))}
     </>
   )
-}
+})

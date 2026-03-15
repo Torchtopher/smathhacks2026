@@ -53,6 +53,12 @@ def init_db() -> None:
                 )
                 cur.execute(
                     """
+                    ALTER TABLE detections
+                    ADD COLUMN IF NOT EXISTS label TEXT NOT NULL DEFAULT 'trash';
+                    """
+                )
+                cur.execute(
+                    """
                     CREATE TABLE IF NOT EXISTS boats (
                         id TEXT PRIMARY KEY,
                         name TEXT NOT NULL,
@@ -82,6 +88,18 @@ def init_db() -> None:
                 )
                 cur.execute(
                     """
+                    CREATE INDEX IF NOT EXISTS idx_detection_location_gist
+                    ON detections USING GIST (location);
+                    """
+                )
+                cur.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_detection_detected_at
+                    ON detections (detected_at DESC);
+                    """
+                )
+                cur.execute(
+                    """
                     CREATE INDEX IF NOT EXISTS idx_boat_positions_timestamp
                     ON boat_positions (timestamp DESC);
                     """
@@ -104,8 +122,18 @@ def init_db() -> None:
                         to_regclass('public.boats') IS NOT NULL AS has_boats;
                     """
                 )
-                has_boat_states, has_detections, has_boat_positions, has_boats = cur.fetchone()
-                if not (has_boat_states and has_detections and has_boat_positions and has_boats):
+                schema_row = cur.fetchone()
+                if schema_row is None:
+                    raise RuntimeError("Failed to verify database schema")
+                has_boat_states, has_detections, has_boat_positions, has_boats = (
+                    schema_row
+                )
+                if not (
+                    has_boat_states
+                    and has_detections
+                    and has_boat_positions
+                    and has_boats
+                ):
                     raise RuntimeError(
                         "Database user lacks schema-create privileges and required tables are missing. "
                         "Run schema.sql using a privileged role, then restart the API."
@@ -121,10 +149,33 @@ def init_db() -> None:
                     );
                     """
                 )
-                has_last_image_column = cur.fetchone()[0]
+                last_image_row = cur.fetchone()
+                if last_image_row is None:
+                    raise RuntimeError("Failed to verify boats.last_image")
+                has_last_image_column = last_image_row[0]
                 if not has_last_image_column:
                     raise RuntimeError(
                         "Database schema is missing boats.last_image. "
+                        "Run schema.sql using a privileged role, then restart the API."
+                    )
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'detections'
+                          AND column_name = 'label'
+                    );
+                    """
+                )
+                label_row = cur.fetchone()
+                if label_row is None:
+                    raise RuntimeError("Failed to verify detections.label")
+                has_label_column = label_row[0]
+                if not has_label_column:
+                    raise RuntimeError(
+                        "Database schema is missing detections.label. "
                         "Run schema.sql using a privileged role, then restart the API."
                     )
         conn.commit()

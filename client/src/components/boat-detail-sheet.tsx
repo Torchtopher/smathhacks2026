@@ -28,6 +28,8 @@ export function BoatDetailSheet({ boat, onOpenChange }: BoatDetailSheetProps) {
     if (!boat) setImageOpen(false)
   }, [boat])
 
+  const canShowImage = Boolean(boat?.has_image && boat.image)
+
   return (
     <Sheet open={!!boat} onOpenChange={onOpenChange}>
       <SheetContent side="right">
@@ -41,7 +43,7 @@ export function BoatDetailSheet({ boat, onOpenChange }: BoatDetailSheetProps) {
               <SheetDescription>Boat details and position</SheetDescription>
             </SheetHeader>
             <div className="space-y-4 px-4">
-              {boat.image && (
+              {canShowImage && (
                 <div className="overflow-hidden rounded-lg">
                   <button
                     type="button"
@@ -78,7 +80,7 @@ export function BoatDetailSheet({ boat, onOpenChange }: BoatDetailSheetProps) {
                 <DialogHeader>
                   <DialogTitle>{boat.name} - Latest Image</DialogTitle>
                 </DialogHeader>
-                {boat.image && (
+                {canShowImage && (
                   <div className="flex-1 min-h-0 overflow-hidden rounded-md bg-black/80">
                     <img
                       src={boat.image}

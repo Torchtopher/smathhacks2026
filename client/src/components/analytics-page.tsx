@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Cell, Legend,
+  BarChart, Bar, AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid, Cell, Legend,
 } from "recharts"
 import { MapContainer, TileLayer } from "react-leaflet"
 import {
@@ -38,37 +38,153 @@ function formatHour(ts: number): string {
 }
 
 export function AnalyticsPage({ boats, detections }: AnalyticsPageProps) {
-  const totalDetections = detections.length
-  const avgConfidence = useMemo(
-    () =>
-      detections.length
-        ? detections.reduce((s, t) => s + t.confidence, 0) / detections.length
-        : 0,
-    [detections],
-  )
+  const {
+    totalDetections,
+    avgConfidence,
+    labelCounts,
+    perBoat,
+    confidenceBuckets,
+    perBoatStats,
+    hourlyByLabel,
+    hourlyByBoat,
+    boatNames,
+    labels,
+    detectionsPerHour,
+  } = useMemo(() => {
+    const total = detections.length
+    const labelCountsMap: Record<string, number> = {}
+    const boatDetectionCounts: Record<string, number> = {}
+    const perBoatStatsMap: Record<string, { count: number; confidenceSum: number; latestDetectionAt: number | null }> = {}
+    const confidenceBucketDefs = [
+      { range: "70-75%", min: 0.7, max: 0.75, count: 0 },
+      { range: "75-80%", min: 0.75, max: 0.8, count: 0 },
+      { range: "80-85%", min: 0.8, max: 0.85, count: 0 },
+      { range: "85-90%", min: 0.85, max: 0.9, count: 0 },
+      { range: "90-95%", min: 0.9, max: 0.95, count: 0 },
+    ]
+    const labelSet = new Set<string>()
+    const times: number[] = []
+    let confidenceSum = 0
 
-  const labelCounts = useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const t of detections) {
-      const label = t.label
-      counts[label] = (counts[label] || 0) + 1
+    for (const detection of detections) {
+      confidenceSum += detection.confidence
+      labelCountsMap[detection.label] = (labelCountsMap[detection.label] || 0) + 1
+      boatDetectionCounts[detection.boat_id] = (boatDetectionCounts[detection.boat_id] || 0) + 1
+      labelSet.add(detection.label)
+      times.push(detection.detected_at)
+
+      const stats = perBoatStatsMap[detection.boat_id] ?? {
+        count: 0,
+        confidenceSum: 0,
+        latestDetectionAt: null,
+      }
+      stats.count += 1
+      stats.confidenceSum += detection.confidence
+      stats.latestDetectionAt = stats.latestDetectionAt === null
+        ? detection.detected_at
+        : Math.max(stats.latestDetectionAt, detection.detected_at)
+      perBoatStatsMap[detection.boat_id] = stats
+
+      let matched = false
+      for (const bucket of confidenceBucketDefs) {
+        if (detection.confidence >= bucket.min && detection.confidence < bucket.max) {
+          bucket.count += 1
+          matched = true
+          break
+        }
+      }
+      if (!matched && detection.confidence >= 0.95) {
+        confidenceBucketDefs[confidenceBucketDefs.length - 1].count += 1
+      }
     }
-    return Object.entries(counts)
+
+    const labelCountsData = Object.entries(labelCountsMap)
       .map(([label, count]) => ({
         label: LABEL_DISPLAY_NAMES[label] ?? label,
         rawLabel: label,
         count,
       }))
       .sort((a, b) => b.count - a.count)
-  }, [detections])
 
-  const perBoat = useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const t of detections) counts[t.boat_id] = (counts[t.boat_id] || 0) + 1
-    return boats.map((b) => ({
-      name: b.name,
-      detections: counts[b.boat_id] || 0,
-    }))
+    const perBoatData = boats
+      .map((boat) => ({ name: boat.name, detections: boatDetectionCounts[boat.boat_id] || 0 }))
+      .sort((a, b) => b.detections - a.detections)
+      .slice(0, 10)
+
+    const sortedLabels = [...labelSet]
+    const boatNameMap: Record<string, string> = {}
+    for (const boat of boats) boatNameMap[boat.boat_id] = boat.name
+
+    const sortedBoatIds = Object.entries(boatDetectionCounts)
+      .sort((a, b) => b[1] - a[1])
+    const top5Ids = new Set(sortedBoatIds.slice(0, 5).map(([id]) => id))
+    const top5Names = sortedBoatIds
+      .slice(0, 5)
+      .map(([id]) => boatNameMap[id] || id)
+
+    let hourlyByLabelData: Array<Record<string, string | number>> = []
+    let hourlyByBoatData: Array<Record<string, string | number>> = []
+
+    if (times.length > 0) {
+      const minTime = Math.min(...times)
+      const maxTime = Math.max(...times)
+      const HOUR = 3600
+      const startHour = Math.floor(minTime / HOUR) * HOUR
+      const endHour = Math.floor(maxTime / HOUR) * HOUR
+      const hours: number[] = []
+      const byLabelBuckets: Record<string, number>[] = []
+      const byBoatBuckets: Record<string, number>[] = []
+
+      for (let hour = startHour; hour <= endHour; hour += HOUR) {
+        hours.push(hour)
+        const labelBucket: Record<string, number> = {}
+        const boatBucket: Record<string, number> = {}
+        for (const label of sortedLabels) labelBucket[label] = 0
+        for (const name of top5Names) boatBucket[name] = 0
+        byLabelBuckets.push(labelBucket)
+        byBoatBuckets.push(boatBucket)
+      }
+
+      for (const detection of detections) {
+        const idx = Math.floor((detection.detected_at - startHour) / HOUR)
+        if (idx < 0 || idx >= hours.length) continue
+        byLabelBuckets[idx][detection.label] = (byLabelBuckets[idx][detection.label] || 0) + 1
+        if (top5Ids.has(detection.boat_id)) {
+          const boatName = boatNameMap[detection.boat_id] || detection.boat_id
+          byBoatBuckets[idx][boatName] = (byBoatBuckets[idx][boatName] || 0) + 1
+        }
+      }
+
+      hourlyByLabelData = hours.map((hour, index) => ({
+        hour: formatHour(hour),
+        ...byLabelBuckets[index],
+      }))
+      hourlyByBoatData = hours.map((hour, index) => ({
+        hour: formatHour(hour),
+        ...byBoatBuckets[index],
+      }))
+    }
+
+    const spanHours = times.length > 1
+      ? (Math.max(...times) - Math.min(...times)) / 3600
+      : 0
+
+    return {
+      totalDetections: total,
+      avgConfidence: total ? confidenceSum / total : 0,
+      labelCounts: labelCountsData,
+      perBoat: perBoatData,
+      confidenceBuckets: confidenceBucketDefs.map((bucket) => ({
+        range: bucket.range,
+        count: bucket.count,
+      })),
+      perBoatStats: perBoatStatsMap,
+      hourlyByLabel: hourlyByLabelData,
+      hourlyByBoat: hourlyByBoatData,
+      boatNames: top5Names,
+      labels: sortedLabels,
+      detectionsPerHour: spanHours > 0 ? total / spanHours : 0,
+    }
   }, [boats, detections])
 
   const perBoatConfig: ChartConfig = {
@@ -79,117 +195,19 @@ export function AnalyticsPage({ boats, detections }: AnalyticsPageProps) {
     count: { label: "Count", color: "var(--chart-3)" },
   }
 
-  const confidenceBuckets = useMemo(() => {
-    const buckets = [
-      { range: "70-75%", min: 0.7, max: 0.75, count: 0 },
-      { range: "75-80%", min: 0.75, max: 0.8, count: 0 },
-      { range: "80-85%", min: 0.8, max: 0.85, count: 0 },
-      { range: "85-90%", min: 0.85, max: 0.9, count: 0 },
-      { range: "90-95%", min: 0.9, max: 0.95, count: 0 },
-    ]
-    for (const t of detections) {
-      for (const b of buckets) {
-        if (t.confidence >= b.min && t.confidence < b.max) {
-          b.count++
-          break
-        }
-      }
-      if (t.confidence >= 0.95) buckets[buckets.length - 1].count++
-    }
-    return buckets.map((b) => ({ range: b.range, count: b.count }))
-  }, [detections])
-
   const confidenceConfig: ChartConfig = {
     count: { label: "Count", color: "var(--chart-2)" },
   }
-
-  const perBoatStats = useMemo(() => {
-    const byBoat: Record<string, { count: number; confidenceSum: number; latestDetectionAt: number | null }> = {}
-    for (const t of detections) {
-      const cur = byBoat[t.boat_id] ?? { count: 0, confidenceSum: 0, latestDetectionAt: null }
-      cur.count += 1
-      cur.confidenceSum += t.confidence
-      cur.latestDetectionAt = cur.latestDetectionAt === null ? t.detected_at : Math.max(cur.latestDetectionAt, t.detected_at)
-      byBoat[t.boat_id] = cur
-    }
-    return byBoat
-  }, [detections])
-
-  // Hourly bucketing for trend charts
-  const { hourlyByLabel, hourlyByBoat, boatNames } = useMemo(() => {
-    if (detections.length === 0) return { hourlyByLabel: [], hourlyByBoat: [], boatNames: [] }
-
-    const times = detections.map((d) => d.detected_at)
-    const minTime = Math.min(...times)
-    const maxTime = Math.max(...times)
-
-    const HOUR = 3600
-    const startHour = Math.floor(minTime / HOUR) * HOUR
-    const endHour = Math.floor(maxTime / HOUR) * HOUR
-
-    // Build boat name lookup
-    const boatNameMap: Record<string, string> = {}
-    for (const b of boats) boatNameMap[b.boat_id] = b.name
-    const uniqueBoatIds = [...new Set(detections.map((d) => d.boat_id))]
-    const names = uniqueBoatIds.map((id) => boatNameMap[id] || id)
-
-    // All unique labels
-    const labels = [...new Set(detections.map((d) => d.label))]
-
-    const byLabelArr: Record<string, number>[] = []
-    const byBoatArr: Record<string, number>[] = []
-    const hours: number[] = []
-
-    for (let h = startHour; h <= endHour; h += HOUR) {
-      hours.push(h)
-      const labelBucket: Record<string, number> = {}
-      const boatBucket: Record<string, number> = {}
-      for (const l of labels) labelBucket[l] = 0
-      for (const name of names) boatBucket[name] = 0
-      byLabelArr.push(labelBucket)
-      byBoatArr.push(boatBucket)
-    }
-
-    for (const d of detections) {
-      const idx = Math.floor((d.detected_at - startHour) / HOUR)
-      if (idx >= 0 && idx < hours.length) {
-        byLabelArr[idx][d.label] = (byLabelArr[idx][d.label] || 0) + 1
-        const bName = boatNameMap[d.boat_id] || d.boat_id
-        byBoatArr[idx][bName] = (byBoatArr[idx][bName] || 0) + 1
-      }
-    }
-
-    return {
-      hourlyByLabel: hours.map((h, i) => ({
-        hour: formatHour(h),
-        ...byLabelArr[i],
-      })),
-      hourlyByBoat: hours.map((h, i) => ({
-        hour: formatHour(h),
-        ...byBoatArr[i],
-      })),
-      boatNames: names,
-    }
-  }, [detections, boats])
-
-  const labels = useMemo(
-    () => [...new Set(detections.map((d) => d.label))],
-    [detections],
-  )
-
-  const detectionsPerHour = useMemo(() => {
-    if (detections.length < 2) return 0
-    const times = detections.map((d) => d.detected_at)
-    const spanHours = (Math.max(...times) - Math.min(...times)) / 3600
-    return spanHours > 0 ? detections.length / spanHours : 0
-  }, [detections])
 
   const labelTrendConfig: ChartConfig = Object.fromEntries(
     labels.map((l) => [l, { label: LABEL_DISPLAY_NAMES[l] ?? l, color: LABEL_COLORS[l] ?? "#888" }]),
   )
 
   const boatTrendConfig: ChartConfig = Object.fromEntries(
-    boatNames.map((name, i) => [name, { label: name, color: BOAT_CHART_COLORS[i % BOAT_CHART_COLORS.length] }]),
+    boatNames.map((name, i) => [
+      name,
+      { label: name, color: BOAT_CHART_COLORS[i % BOAT_CHART_COLORS.length] },
+    ]),
   )
 
   function csvEscape(value: unknown): string {
@@ -228,8 +246,8 @@ export function AnalyticsPage({ boats, detections }: AnalyticsPageProps) {
         new Date(t.detected_at * 1000).toISOString(),
         t.lat,
         t.lon,
-        (t.drift_path ?? []).length,
-        JSON.stringify(t.drift_path ?? []),
+        "",
+        "",
       ])
     downloadCsv(
       `hackathon_detections_${Date.now()}.csv`,
@@ -368,14 +386,14 @@ export function AnalyticsPage({ boats, detections }: AnalyticsPageProps) {
 
         <Card>
           <CardHeader>
-            <CardTitle>Detections per Boat</CardTitle>
+            <CardTitle>Detections per Boat (Top 10)</CardTitle>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={perBoatConfig} className="max-h-[300px]">
-              <BarChart data={perBoat}>
+            <ChartContainer config={perBoatConfig} className="h-[350px]">
+              <BarChart data={perBoat} layout="vertical">
                 <CartesianGrid />
-                <XAxis dataKey="name" />
-                <YAxis />
+                <XAxis type="number" />
+                <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 12 }} />
                 <ChartTooltip content={<ChartTooltipContent />} />
                 <Bar dataKey="detections" fill="var(--color-detections)" />
               </BarChart>
@@ -415,27 +433,28 @@ export function AnalyticsPage({ boats, detections }: AnalyticsPageProps) {
         {/* Detections per Hour by Boat */}
         <Card>
             <CardHeader>
-              <CardTitle>Detections per Hour by Boat</CardTitle>
+              <CardTitle>Detections per Hour by Boat (Top 5)</CardTitle>
             </CardHeader>
             <CardContent>
               <ChartContainer config={boatTrendConfig} className="h-[300px]">
-                <LineChart data={hourlyByBoat}>
+                <AreaChart data={hourlyByBoat}>
                   <CartesianGrid />
                   <XAxis dataKey="hour" tick={{ fontSize: 12 }} interval="preserveStartEnd" />
                   <YAxis />
                   <ChartTooltip content={<ChartTooltipContent />} />
                   <Legend />
                   {boatNames.map((name, i) => (
-                    <Line
+                    <Area
                       key={name}
                       type="monotone"
                       dataKey={name}
+                      stackId="1"
+                      fill={BOAT_CHART_COLORS[i % BOAT_CHART_COLORS.length]}
                       stroke={BOAT_CHART_COLORS[i % BOAT_CHART_COLORS.length]}
-                      strokeWidth={2}
-                      dot={false}
+                      fillOpacity={0.6}
                     />
                   ))}
-                </LineChart>
+                </AreaChart>
               </ChartContainer>
             </CardContent>
           </Card>

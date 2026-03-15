@@ -22,26 +22,91 @@ DATABASE_URL = os.getenv(
     "postgresql://smathhacks:smathhacks@localhost:5432/smathhacks",
 )
 
-BOATS = [
-    # All positions are open water off the NC Outer Banks / Cape Lookout area
-    # lat ~33.8–34.5, lon ~-76.8 to -75.8 (well offshore, no land)
-    ("boat-001", "Sea Wanderer", "light", 34.10, -76.20, 45),
-    ("boat-002", "Lobster King", "heavy", 34.25, -76.05, 120),
-    ("boat-003", "Tide Runner", "light", 34.40, -76.40, 200),
-    ("boat-004", "Atlantic Scout", "heavy", 33.95, -76.10, 310),
-    ("boat-005", "Harbor Breeze", "light", 34.50, -76.30, 85),
-    ("boat-006", "Deep Current", "heavy", 34.05, -76.50, 160),
-    # 4 new boats
-    ("boat-007", "Misty Horizon", "medium", 34.20, -75.90, 270),
-    ("boat-008", "Nor'easter", "medium", 34.35, -76.55, 30),
-    ("boat-009", "Kelp Dancer", "light", 33.85, -76.00, 140),
-    ("boat-010", "Iron Wake", "heavy", 34.45, -76.70, 190),
+# Safe open-water bounding boxes: (lat_min, lat_max, lon_min, lon_max, region_name)
+OCEAN_REGIONS = [
+    # North Atlantic — off US East Coast
+    (30.0, 38.0, -77.0, -65.0, "N Atlantic West"),
+    # Mid Atlantic — open ocean
+    (25.0, 40.0, -55.0, -35.0, "Mid Atlantic"),
+    # North Atlantic — off Europe
+    (43.0, 52.0, -20.0, -8.0, "N Atlantic East"),
+    # Caribbean Sea — open water south of islands
+    (12.0, 17.0, -80.0, -65.0, "Caribbean"),
+    # Gulf of Mexico — central deep water
+    (24.0, 28.0, -92.0, -86.0, "Gulf of Mexico"),
+    # Mediterranean — open water
+    (34.0, 38.0, 5.0, 20.0, "Mediterranean"),
+    # North Sea
+    (54.0, 58.0, 1.0, 6.0, "North Sea"),
+    # South Atlantic
+    (-35.0, -15.0, -30.0, -5.0, "S Atlantic"),
+    # Indian Ocean — central
+    (-20.0, -5.0, 60.0, 80.0, "Indian Ocean"),
+    # Arabian Sea
+    (10.0, 18.0, 58.0, 68.0, "Arabian Sea"),
+    # Bay of Bengal — central
+    (8.0, 15.0, 82.0, 90.0, "Bay of Bengal"),
+    # South China Sea — open water
+    (8.0, 16.0, 112.0, 118.0, "South China Sea"),
+    # North Pacific — off Japan
+    (28.0, 36.0, 140.0, 155.0, "N Pacific West"),
+    # Central North Pacific
+    (20.0, 35.0, -170.0, -140.0, "Central N Pacific"),
+    # East Pacific — off US West Coast
+    (30.0, 40.0, -135.0, -125.0, "E Pacific"),
+    # South Pacific
+    (-35.0, -20.0, -140.0, -110.0, "S Pacific"),
+    # Tasman Sea
+    (-38.0, -30.0, 155.0, 165.0, "Tasman Sea"),
+    # Southern Ocean
+    (-55.0, -45.0, -60.0, -30.0, "Southern Ocean"),
+    # Norwegian Sea
+    (62.0, 67.0, -2.0, 8.0, "Norwegian Sea"),
+    # Philippine Sea
+    (15.0, 25.0, 125.0, 138.0, "Philippine Sea"),
 ]
+
+BOAT_ADJECTIVES = [
+    "Sea", "Ocean", "Storm", "Iron", "Silver", "Blue", "Dark", "Swift",
+    "Coral", "Deep", "Salt", "Tide", "Misty", "Cold", "Wild", "Brave",
+    "Rusty", "Golden", "Gray", "Crimson", "Jade", "Pearl", "Amber", "Steel",
+]
+BOAT_NOUNS = [
+    "Wanderer", "Runner", "Scout", "Breeze", "Current", "Horizon", "Dancer",
+    "Wake", "Spirit", "Voyager", "Mariner", "Drifter", "Pursuit", "Arrow",
+    "Serpent", "Falcon", "Anchor", "Compass", "Tempest", "Venture", "Striker",
+]
+WEIGHT_CLASSES = ["light", "medium", "heavy"]
+NUM_BOATS = 500
+
+
+def generate_boats(n: int):
+    """Generate n boats spread across safe ocean regions."""
+    used_names: set[str] = set()
+    boats = []
+    for i in range(n):
+        region = random.choice(OCEAN_REGIONS)
+        lat_min, lat_max, lon_min, lon_max, _ = region
+        lat = round(random.uniform(lat_min, lat_max), 4)
+        lon = round(random.uniform(lon_min, lon_max), 4)
+        heading = random.randint(0, 359)
+        wc = random.choice(WEIGHT_CLASSES)
+
+        # Generate a unique name
+        while True:
+            name = f"{random.choice(BOAT_ADJECTIVES)} {random.choice(BOAT_NOUNS)}"
+            if name not in used_names:
+                used_names.add(name)
+                break
+        boat_id = f"boat-{i + 1:04d}"
+        boats.append((boat_id, name, wc, lat, lon, heading))
+    return boats
 
 LABELS = ["trash"] * 8 + ["net"] * 5 + ["dolphin"] * 4 + ["turtle"] * 3  # ~40/25/20/15%
 
 TRAIL_POINTS = 60
 TRAIL_INTERVAL_S = 30  # seconds between trail points
+TRAIL_STEP_DEG = 0.01  # ~1.1km per step → ~66km total trail
 
 
 def load_train_images() -> list[str]:
@@ -62,8 +127,8 @@ def generate_trail(lat: float, lon: float, heading: float, now: float):
         ts = now - i * TRAIL_INTERVAL_S
         points.append((cur_lat, cur_lon, heading, ts))
         # Step backward (opposite of heading) with jitter
-        cur_lat -= math.cos(rad) * 0.0003 + (random.random() - 0.5) * 0.00005
-        cur_lon -= math.sin(rad) * 0.0003 + (random.random() - 0.5) * 0.00005
+        cur_lat -= math.cos(rad) * TRAIL_STEP_DEG + (random.random() - 0.5) * 0.002
+        cur_lon -= math.sin(rad) * TRAIL_STEP_DEG + (random.random() - 0.5) * 0.002
     return points
 
 
@@ -77,8 +142,8 @@ def generate_drift_path(lat: float, lon: float):
             "lon": round(cur_lon, 6),
             "time_offset_hours": i * 12,
         })
-        cur_lat += -0.004 + (random.random() - 0.5) * 0.002
-        cur_lon += 0.005 + (random.random() - 0.5) * 0.002
+        cur_lat += -0.08 + (random.random() - 0.5) * 0.04
+        cur_lon += 0.10 + (random.random() - 0.5) * 0.04
     return path
 
 
@@ -89,6 +154,7 @@ def random_bbox():
 
 def seed(truncate: bool = True):
     now = time.time()
+    boats = generate_boats(NUM_BOATS)
     images = load_train_images()
     if images:
         print(f"Loaded {len(images)} images from train/")
@@ -105,18 +171,18 @@ def seed(truncate: bool = True):
                 print("Truncated all tables.")
 
             # -- boats --
-            for i, (boat_id, name, weight_class, *_) in enumerate(BOATS):
+            for i, (boat_id, name, weight_class, *_) in enumerate(boats):
                 created_at = now - random.uniform(86400 * 30, 86400 * 365)
                 last_image = images[i % len(images)] if images else None
                 cur.execute(
                     "INSERT INTO boats (id, name, weight_class, created_at, last_image) VALUES (%s, %s, %s, %s, %s)",
                     (boat_id, name, weight_class, created_at, last_image),
                 )
-            print(f"Inserted {len(BOATS)} boats.")
+            print(f"Inserted {len(boats)} boats.")
 
             # -- trails + boat_states --
             total_positions = 0
-            for boat_id, _name, _wc, lat, lon, heading in BOATS:
+            for boat_id, _name, _wc, lat, lon, heading in boats:
                 trail = generate_trail(lat, lon, heading, now)
                 # Most recent point → boat_states
                 cur.execute(
@@ -132,11 +198,11 @@ def seed(truncate: bool = True):
                         (boat_id, p_lat, p_lon, p_heading, p_ts),
                     )
                     total_positions += 1
-            print(f"Inserted {len(BOATS)} boat_states and {total_positions} boat_positions.")
+            print(f"Inserted {len(boats)} boat_states and {total_positions} boat_positions.")
 
             # -- detections --
             det_count = 0
-            for boat_id, _name, _wc, lat, lon, _heading in BOATS:
+            for boat_id, _name, _wc, lat, lon, _heading in boats:
                 n_dets = random.randint(2, 4)
                 for _ in range(n_dets):
                     label = random.choice(LABELS)

@@ -10,8 +10,8 @@ export interface BoatState {
   heading: number
   timestamp: number
   trail?: [number, number][]
+  has_image?: boolean
   image?: string
-
 }
 
 export interface DriftPoint {

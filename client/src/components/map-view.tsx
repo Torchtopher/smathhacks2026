@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { MapContainer, TileLayer, ScaleControl } from "react-leaflet"
 import { BoatMarkers } from "@/components/boat-markers"
 import { DetectionLayer } from "@/components/detection-layer"
@@ -14,6 +14,7 @@ const TILE_LIGHT = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.p
 interface MapViewProps {
   boats: BoatState[]
   selectedBoatId: string | null
+  selectedBoatTrail: [number, number][] | null
   onBoatClick: (boat: BoatState) => void
   detections: Detection[]
   showBoats: boolean
@@ -28,6 +29,7 @@ interface MapViewProps {
 export function MapView({
   boats,
   selectedBoatId,
+  selectedBoatTrail,
   onBoatClick,
   detections,
   showBoats,
@@ -39,10 +41,19 @@ export function MapView({
   dark,
 }: MapViewProps) {
   const [hoveredLabel, setHoveredLabel] = useState<string | null>(null)
+  const [activeHoveredLabel, setActiveHoveredLabel] = useState<string | null>(null)
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setActiveHoveredLabel(hoveredLabel)
+    }, 60)
+
+    return () => window.clearTimeout(timeout)
+  }, [hoveredLabel])
 
   const filteredDetections = useMemo(
-    () => hoveredLabel ? detections.filter((d) => d.label === hoveredLabel) : detections,
-    [detections, hoveredLabel]
+    () => activeHoveredLabel ? detections.filter((d) => d.label === activeHoveredLabel) : detections,
+    [detections, activeHoveredLabel]
   )
 
   return (
@@ -59,7 +70,13 @@ export function MapView({
           />
           <ScaleControl position="bottomright" />
           {showBoats ? (
-            <BoatMarkers boats={boats} selectedBoatId={selectedBoatId} onBoatClick={onBoatClick} dark={dark} />
+            <BoatMarkers
+              boats={boats}
+              selectedBoatId={selectedBoatId}
+              selectedBoatTrail={selectedBoatTrail}
+              onBoatClick={onBoatClick}
+              dark={dark}
+            />
           ) : null}
           {showDetections ? (
             <DetectionLayer detections={filteredDetections} timeHours={timeHours} />

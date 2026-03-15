@@ -45,7 +45,7 @@ export const api = {
         timestamp: number
         name: string
         weight_class: string
-        image?: string | null
+        has_image?: boolean
       }[]
     }>("/api/boats")
     return data.boats.map((b) => ({
@@ -56,11 +56,23 @@ export const api = {
       gps_lon: b.gps_lon,
       heading: b.heading,
       timestamp: b.timestamp,
-      image: b.image ?? undefined,
+      has_image: b.has_image ?? false,
     }))
   },
 
-  async getDetections(): Promise<Detection[]> {
+  async getBoatImage(boatId: string): Promise<string | undefined> {
+    const data = await get<{
+      boat_id: string
+      image: string | null
+    }>(`/api/boats/${encodeURIComponent(boatId)}/image`)
+    return data.image ?? undefined
+  },
+
+  async getDetections(options?: { includeDrift?: boolean; since?: number; limit?: number }): Promise<Detection[]> {
+    const params = new URLSearchParams()
+    if (options?.includeDrift) params.set("include_drift", "true")
+    if (options?.since !== undefined) params.set("since", String(options.since))
+    if (options?.limit !== undefined) params.set("limit", String(options.limit))
     const data = await get<{
       detections: {
         id: string
@@ -75,8 +87,8 @@ export const api = {
           lon: number
           time_offset_hours: number
         }[]
-      }[]
-    }>(`/api/detections`)
+        }[]
+    }>(`/api/detections${params.size ? `?${params.toString()}` : ""}`)
     return data.detections.map((t) => ({
       id: t.id,
       lat: t.lat,
