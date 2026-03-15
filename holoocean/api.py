@@ -101,6 +101,22 @@ def select_agent_state(
     return raw_state, preferred_agent_name
 
 
+def get_agent_sensor_state(raw_state: dict, agent_name: Optional[str]) -> dict:
+    if not isinstance(raw_state, dict):
+        return {}
+
+    if agent_name is not None:
+        named_state = raw_state.get(agent_name)
+        if isinstance(named_state, dict):
+            return named_state
+
+    nested_states = [value for value in raw_state.values() if isinstance(value, dict)]
+    if nested_states:
+        return nested_states[0]
+
+    return raw_state
+
+
 def to_float_list(value: np.ndarray) -> list[float]:
     arr = np.asarray(value).astype(np.float64).reshape(-1)
     return [float(x) for x in arr.tolist()]
@@ -162,6 +178,10 @@ class FrameData:
     image_key: Optional[str] = None
     image_source: str = "viewport"
     pose_key: Optional[str] = None
+    capture_agent_name: Optional[str] = None
+    capture_agent_index: Optional[int] = None
+    viewport_agent_name: Optional[str] = None
+    viewport_agent_index: Optional[int] = None
     pose_matrix: Optional[list[list[float]]] = None
     position: Optional[list[float]] = None
     angles_deg: Optional[dict[str, float]] = None
@@ -198,6 +218,34 @@ class HoloOceanViewportService:
         self._lock = threading.Lock()
         self._ready = threading.Condition(self._lock)
         self._frame = FrameData()
+        self._agent_names: list[str] = []
+        self._requested_viewport_agent_index: Optional[int] = None
+
+    def _validate_agent_index_locked(self, agent_index: int) -> None:
+        if agent_index < 0:
+            raise ValueError("agent_index must be >= 0")
+        if self._agent_names and agent_index >= len(self._agent_names):
+            raise ValueError(
+                f"agent_index {agent_index} is out of range for {len(self._agent_names)} agents"
+            )
+
+    def set_viewport_agent_index(self, agent_index: int) -> None:
+        with self._ready:
+            self._validate_agent_index_locked(agent_index)
+            self._requested_viewport_agent_index = agent_index
+            self._ready.notify_all()
+
+    def agent_names(self) -> list[str]:
+        with self._ready:
+            return list(self._agent_names)
+
+    def requested_viewport_agent(self) -> tuple[Optional[int], Optional[str]]:
+        with self._ready:
+            index = self._requested_viewport_agent_index
+            names = list(self._agent_names)
+        if index is None or index < 0 or index >= len(names):
+            return index, None
+        return index, names[index]
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -234,12 +282,24 @@ class HoloOceanViewportService:
                     act_agent_name,
                     ", ".join(agent.sensors.keys()),
                 )
+                agent_names = list(env.agents.keys())
+                agent_index_by_name = {name: idx for idx, name in enumerate(agent_names)}
+                if not agent_names:
+                    raise RuntimeError("No agents found in environment")
+                logger.info("Available agents: %s", ", ".join(agent_names))
 
                 image_key = None
                 image_source = "unknown"
                 pose_key = None
                 capture_agent_name = act_agent_name
+                capture_agent_index = agent_index_by_name.get(capture_agent_name)
                 logged_capture_agent_switch = False
+                active_viewport_agent_name = None
+                active_viewport_agent_index = None
+                viewport_switch_settle_ticks = max(
+                    0, int(os.getenv("VIEWPORT_SWITCH_SETTLE_TICKS", "1"))
+                )
+                remaining_settle_ticks = 0
                 tick = 0
                 logged_frame_shape = False
 
@@ -261,6 +321,17 @@ class HoloOceanViewportService:
                 missing_viewport_ticks = 0
                 max_missing_viewport_ticks = int(os.getenv("MAX_MISSING_VIEWPORT_TICKS", "300"))
                 has_seen_viewport_frame = False
+                with self._ready:
+                    self._agent_names = list(agent_names)
+                    if self._requested_viewport_agent_index is None:
+                        self._requested_viewport_agent_index = 0
+                    elif self._requested_viewport_agent_index >= len(agent_names):
+                        logger.warning(
+                            "Requested viewport agent index %s is out of range; using 0",
+                            self._requested_viewport_agent_index,
+                        )
+                        self._requested_viewport_agent_index = 0
+                    self._ready.notify_all()
 
                 while not self._stop_event.is_set():
                     if (
@@ -277,11 +348,55 @@ class HoloOceanViewportService:
                     state = env.tick()
                     tick += 1
 
+                    with self._ready:
+                        requested_viewport_agent_index = self._requested_viewport_agent_index
+                    if requested_viewport_agent_index is None:
+                        requested_viewport_agent_index = 0
+                    if requested_viewport_agent_index < 0:
+                        requested_viewport_agent_index = 0
+                    if requested_viewport_agent_index >= len(agent_names):
+                        requested_viewport_agent_index = len(agent_names) - 1
+                    requested_viewport_agent_name = agent_names[requested_viewport_agent_index]
+
+                    target_agent_state = get_agent_sensor_state(
+                        state, requested_viewport_agent_name
+                    )
+                    target_pose_key = find_pose_key(target_agent_state, self.pose_sensor_name)
+                    target_pose = None
+                    if target_pose_key is not None and target_pose_key in target_agent_state:
+                        target_pose = as_pose_matrix(target_agent_state[target_pose_key])
+
+                    if requested_viewport_agent_index != active_viewport_agent_index:
+                        active_viewport_agent_index = requested_viewport_agent_index
+                        active_viewport_agent_name = requested_viewport_agent_name
+                        remaining_settle_ticks = viewport_switch_settle_ticks
+                        logger.info(
+                            "Viewport target agent changed to '%s' (index=%d)",
+                            active_viewport_agent_name,
+                            active_viewport_agent_index,
+                        )
+
+                    if target_pose is not None:
+                        viewport_position = to_float_list(target_pose[:3, 3])
+                        roll, pitch, yaw = euler_zyx_deg_from_rotation(target_pose[:3, :3])
+                        try:
+                            env.move_viewport(
+                                viewport_position,
+                                [float(roll), float(pitch), float(yaw)],
+                            )
+                        except Exception:
+                            logger.exception(
+                                "move_viewport failed for agent '%s' (index=%d)",
+                                requested_viewport_agent_name,
+                                requested_viewport_agent_index,
+                            )
+
                     sensor_state, resolved_agent_name = select_agent_state(
                         state, capture_agent_name
                     )
                     if resolved_agent_name is not None:
                         capture_agent_name = resolved_agent_name
+                        capture_agent_index = agent_index_by_name.get(capture_agent_name)
                     if (
                         not logged_capture_agent_switch
                         and capture_agent_name is not None
@@ -304,6 +419,7 @@ class HoloOceanViewportService:
                                 image_source = "camera"
                     if pose_key is None:
                         pose_key = find_pose_key(sensor_state, self.pose_sensor_name)
+                    resolved_pose_key = pose_key
 
                     if image_key is None or image_key not in sensor_state:
                         if not has_seen_viewport_frame:
@@ -316,6 +432,10 @@ class HoloOceanViewportService:
                                 "ViewportCapture data not found. Ensure viewport sensor is configured "
                                 "and CaptureWidth/CaptureHeight match window_width/window_height."
                             )
+                        continue
+
+                    if remaining_settle_ticks > 0:
+                        remaining_settle_ticks -= 1
                         continue
 
                     frame = sensor_state[image_key]
@@ -347,26 +467,33 @@ class HoloOceanViewportService:
                     position = None
                     angles_deg = None
                     bearing_deg = None
-                    if pose_key is not None and pose_key in sensor_state:
+                    raw_pose = target_pose
+                    if raw_pose is not None:
+                        resolved_pose_key = target_pose_key
+                    elif pose_key is not None and pose_key in sensor_state:
                         raw_pose = as_pose_matrix(sensor_state[pose_key])
-                        if raw_pose is not None:
-                            rotation = raw_pose[:3, :3]
-                            roll, pitch, yaw = euler_zyx_deg_from_rotation(rotation)
-                            pose_matrix = raw_pose.astype(np.float64).tolist()
-                            position = to_float_list(raw_pose[:3, 3])
-                            angles_deg = {
-                                "roll": float(roll),
-                                "pitch": float(pitch),
-                                "yaw": float(yaw),
-                            }
-                            bearing_deg = float((yaw + 360.0) % 360.0)
+                    if raw_pose is not None:
+                        rotation = raw_pose[:3, :3]
+                        roll, pitch, yaw = euler_zyx_deg_from_rotation(rotation)
+                        pose_matrix = raw_pose.astype(np.float64).tolist()
+                        position = to_float_list(raw_pose[:3, 3])
+                        angles_deg = {
+                            "roll": float(roll),
+                            "pitch": float(pitch),
+                            "yaw": float(yaw),
+                        }
+                        bearing_deg = float((yaw + 360.0) % 360.0)
 
                     with self._ready:
                         self._frame = FrameData(
                             jpeg=encoded.tobytes(),
                             image_key=image_key,
                             image_source=image_source,
-                            pose_key=pose_key,
+                            pose_key=resolved_pose_key,
+                            capture_agent_name=capture_agent_name,
+                            capture_agent_index=capture_agent_index,
+                            viewport_agent_name=active_viewport_agent_name,
+                            viewport_agent_index=active_viewport_agent_index,
                             pose_matrix=pose_matrix,
                             position=position,
                             angles_deg=angles_deg,
@@ -387,10 +514,22 @@ class HoloOceanViewportService:
                 self._frame.error_traceback = tb
                 self._ready.notify_all()
 
-    def latest_frame(self, wait_ms: int = 0) -> FrameData:
+    def latest_frame(self, wait_ms: int = 0, agent_index: Optional[int] = None) -> FrameData:
         deadline = time.time() + max(wait_ms, 0) / 1000.0
+        if agent_index is not None:
+            self.set_viewport_agent_index(agent_index)
         with self._ready:
             while self._frame.jpeg is None and self._frame.error is None:
+                remaining = deadline - time.time()
+                if wait_ms <= 0 or remaining <= 0:
+                    break
+                self._ready.wait(timeout=remaining)
+            while (
+                agent_index is not None
+                and self._frame.error is None
+                and self._frame.jpeg is not None
+                and self._frame.viewport_agent_index != agent_index
+            ):
                 remaining = deadline - time.time()
                 if wait_ms <= 0 or remaining <= 0:
                     break
@@ -400,6 +539,10 @@ class HoloOceanViewportService:
                 image_key=self._frame.image_key,
                 image_source=self._frame.image_source,
                 pose_key=self._frame.pose_key,
+                capture_agent_name=self._frame.capture_agent_name,
+                capture_agent_index=self._frame.capture_agent_index,
+                viewport_agent_name=self._frame.viewport_agent_name,
+                viewport_agent_index=self._frame.viewport_agent_index,
                 pose_matrix=self._frame.pose_matrix,
                 position=self._frame.position,
                 angles_deg=self._frame.angles_deg,
@@ -449,12 +592,22 @@ app = FastAPI(title="HoloOcean Viewport API", lifespan=lifespan)
 @app.get("/health")
 def health():
     frame = viewport_service.latest_frame(wait_ms=0)
+    requested_agent_index, requested_agent_name = viewport_service.requested_viewport_agent()
+    agent_names = viewport_service.agent_names()
     return {
         "scenario": SCENARIO,
         "viewport_sensor_name": VIEWPORT_SENSOR_NAME,
         "pose_sensor_name": POSE_SENSOR_NAME,
         "viewport_width": VIEWPORT_WIDTH,
         "viewport_height": VIEWPORT_HEIGHT,
+        "num_agents": len(agent_names),
+        "agents": agent_names,
+        "requested_viewport_agent_index": requested_agent_index,
+        "requested_viewport_agent_name": requested_agent_name,
+        "viewport_agent_index": frame.viewport_agent_index,
+        "viewport_agent_name": frame.viewport_agent_name,
+        "capture_agent_index": frame.capture_agent_index,
+        "capture_agent_name": frame.capture_agent_name,
         "holoocean_verbose": HOLOOCEAN_VERBOSE,
         "holoocean_show_viewport": HOLOOCEAN_SHOW_VIEWPORT,
         "ready": frame.jpeg is not None,
@@ -472,13 +625,35 @@ def health():
     }
 
 
+@app.get("/agents")
+def agents():
+    requested_agent_index, requested_agent_name = viewport_service.requested_viewport_agent()
+    agent_names = viewport_service.agent_names()
+    return {
+        "agents": [{"index": index, "name": name} for index, name in enumerate(agent_names)],
+        "requested_viewport_agent_index": requested_agent_index,
+        "requested_viewport_agent_name": requested_agent_name,
+    }
+
+
 @app.get("/latest.jpg")
-def latest_jpg(wait_ms: int = 0):
-    frame = viewport_service.latest_frame(wait_ms=wait_ms)
+def latest_jpg(wait_ms: int = 0, agent_index: Optional[int] = None):
+    try:
+        frame = viewport_service.latest_frame(wait_ms=wait_ms, agent_index=agent_index)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if frame.error:
         raise HTTPException(status_code=500, detail=frame.error)
     if frame.jpeg is None:
         raise HTTPException(status_code=503, detail="No frame available yet")
+    if agent_index is not None and frame.viewport_agent_index != agent_index:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Frame for requested agent index is not ready yet; "
+                "increase wait_ms and retry"
+            ),
+        )
 
     position_values = frame.position or []
     angles = frame.angles_deg or {}
@@ -501,6 +676,14 @@ def latest_jpg(wait_ms: int = 0):
             "X-HoloOcean-Image-Key": str(frame.image_key or ""),
             "X-HoloOcean-Camera-Key": str(frame.image_key or ""),
             "X-HoloOcean-Pose-Key": str(frame.pose_key or ""),
+            "X-HoloOcean-Capture-Agent-Index": (
+                "" if frame.capture_agent_index is None else str(frame.capture_agent_index)
+            ),
+            "X-HoloOcean-Capture-Agent-Name": str(frame.capture_agent_name or ""),
+            "X-HoloOcean-Viewport-Agent-Index": (
+                "" if frame.viewport_agent_index is None else str(frame.viewport_agent_index)
+            ),
+            "X-HoloOcean-Viewport-Agent-Name": str(frame.viewport_agent_name or ""),
             "X-HoloOcean-Position": ",".join(str(v) for v in position_values),
             "X-HoloOcean-Angles-Deg": angles_header,
             "X-HoloOcean-Bearing-Deg": (
@@ -511,12 +694,23 @@ def latest_jpg(wait_ms: int = 0):
 
 
 @app.get("/latest")
-def latest(wait_ms: int = 0, include_image: bool = False):
-    frame = viewport_service.latest_frame(wait_ms=wait_ms)
+def latest(wait_ms: int = 0, include_image: bool = False, agent_index: Optional[int] = None):
+    try:
+        frame = viewport_service.latest_frame(wait_ms=wait_ms, agent_index=agent_index)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if frame.error:
         raise HTTPException(status_code=500, detail=frame.error)
     if frame.jpeg is None:
         raise HTTPException(status_code=503, detail="No frame available yet")
+    if agent_index is not None and frame.viewport_agent_index != agent_index:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Frame for requested agent index is not ready yet; "
+                "increase wait_ms and retry"
+            ),
+        )
 
     body = {
         "tick": frame.tick,
@@ -525,6 +719,10 @@ def latest(wait_ms: int = 0, include_image: bool = False):
         "image_key": frame.image_key,
         "camera_key": frame.image_key,
         "pose_key": frame.pose_key,
+        "capture_agent_name": frame.capture_agent_name,
+        "capture_agent_index": frame.capture_agent_index,
+        "viewport_agent_name": frame.viewport_agent_name,
+        "viewport_agent_index": frame.viewport_agent_index,
         "pose_matrix": frame.pose_matrix,
         "position": frame.position,
         "angles_deg": frame.angles_deg,
