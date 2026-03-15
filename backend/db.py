@@ -57,8 +57,15 @@ def init_db() -> None:
                         id TEXT PRIMARY KEY,
                         name TEXT NOT NULL,
                         weight_class TEXT NOT NULL,
-                        created_at DOUBLE PRECISION NOT NULL
+                        created_at DOUBLE PRECISION NOT NULL,
+                        last_image TEXT
                     );
+                    """
+                )
+                cur.execute(
+                    """
+                    ALTER TABLE boats
+                    ADD COLUMN IF NOT EXISTS last_image TEXT;
                     """
                 )
                 cur.execute(
@@ -101,6 +108,23 @@ def init_db() -> None:
                 if not (has_boat_states and has_trash_detections and has_boat_positions and has_boats):
                     raise RuntimeError(
                         "Database user lacks schema-create privileges and required tables are missing. "
+                        "Run schema.sql using a privileged role, then restart the API."
+                    )
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND table_name = 'boats'
+                          AND column_name = 'last_image'
+                    );
+                    """
+                )
+                has_last_image_column = cur.fetchone()[0]
+                if not has_last_image_column:
+                    raise RuntimeError(
+                        "Database schema is missing boats.last_image. "
                         "Run schema.sql using a privileged role, then restart the API."
                     )
         conn.commit()

@@ -16,6 +16,24 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json()
 }
 
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`PUT ${path} failed (${res.status})`)
+  return res.json()
+}
+
+async function del<T>(path: string): Promise<T> {
+  const res = await fetch(`${path}`, {
+    method: "DELETE",
+  })
+  if (!res.ok) throw new Error(`DELETE ${path} failed (${res.status})`)
+  return res.json()
+}
+
 export const api = {
   async getBoats(): Promise<BoatState[]> {
     const data = await get<{
@@ -27,6 +45,7 @@ export const api = {
         timestamp: number
         name: string
         weight_class: string
+        image?: string | null
       }[]
     }>("/api/boats")
     return data.boats.map((b) => ({
@@ -37,6 +56,7 @@ export const api = {
       gps_lon: b.gps_lon,
       heading: b.heading,
       timestamp: b.timestamp,
+      image: b.image ?? undefined,
     }))
   },
 
@@ -95,5 +115,50 @@ export const api = {
       name: string
       weight_class: string
     }>("/api/boats/register", { name, weight_class: weightClass })
+  },
+
+  async getAdminBoats() {
+    return get<{
+      boats: {
+        boat_id: string
+        name: string
+        weight_class: string
+        created_at: number
+        last_reported_at: number | null
+      }[]
+    }>("/api/admin/boats")
+  },
+
+  async createAdminBoat(input: { boat_id?: string; name: string; weight_class: string }) {
+    return post<{
+      boat_id: string
+      name: string
+      weight_class: string
+      created_at: number
+      last_reported_at: number | null
+    }>("/api/admin/boats", input)
+  },
+
+  async updateAdminBoat(
+    boatId: string,
+    input: { name?: string; weight_class?: string }
+  ) {
+    return put<{
+      boat_id: string
+      name: string
+      weight_class: string
+      created_at: number
+      last_reported_at: number | null
+    }>(`/api/admin/boats/${encodeURIComponent(boatId)}`, input)
+  },
+
+  async deleteAdminBoat(boatId: string, purgeData = true) {
+    return del<{
+      boat_id: string
+      deleted_boat_rows: number
+      deleted_state_rows: number
+      deleted_position_rows: number
+      deleted_detection_rows: number
+    }>(`/api/admin/boats/${encodeURIComponent(boatId)}?purge_data=${purgeData ? "true" : "false"}`)
   },
 }

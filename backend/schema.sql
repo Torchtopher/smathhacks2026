@@ -22,8 +22,12 @@ CREATE TABLE IF NOT EXISTS boats (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     weight_class TEXT NOT NULL,
-    created_at DOUBLE PRECISION NOT NULL
+    created_at DOUBLE PRECISION NOT NULL,
+    last_image TEXT
 );
+
+ALTER TABLE boats
+ADD COLUMN IF NOT EXISTS last_image TEXT;
 
 CREATE TABLE IF NOT EXISTS boat_positions (
     id BIGSERIAL PRIMARY KEY,

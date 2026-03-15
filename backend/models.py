@@ -26,6 +26,33 @@ class BoatRegisterResponse(BaseModel):
     weight_class: str
 
 
+class BoatAdminCreateInput(BaseModel):
+    boat_id: str | None = None
+    name: str
+    weight_class: str
+
+
+class BoatAdminUpdateInput(BaseModel):
+    name: str | None = None
+    weight_class: str | None = None
+
+
+class BoatAdminResponse(BaseModel):
+    boat_id: str
+    name: str
+    weight_class: str
+    created_at: float
+    last_reported_at: float | None = None
+
+
+class BoatAdminDeleteResponse(BaseModel):
+    boat_id: str
+    deleted_boat_rows: int
+    deleted_state_rows: int
+    deleted_position_rows: int
+    deleted_detection_rows: int
+
+
 class DriftPoint(BaseModel):
     lat: float
     lon: float

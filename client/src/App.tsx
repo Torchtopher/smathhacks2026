@@ -3,6 +3,7 @@ import { Routes, Route } from "react-router"
 import { TopBar } from "@/components/top-bar"
 import { MapView } from "@/components/map-view"
 import { AnalyticsPage } from "@/components/analytics-page"
+import { AdminPage } from "@/components/admin-page"
 import { AddBoatDialog } from "@/components/add-boat-dialog"
 import { BoatDetailSheet } from "@/components/boat-detail-sheet"
 import { api } from "@/lib/api"
@@ -66,6 +67,9 @@ function App() {
         } />
         <Route path="/analytics" element={
           <AnalyticsPage boats={boats} trashPoints={trashPoints} />
+        } />
+        <Route path="/admin" element={
+          <AdminPage onDataChanged={fetchData} />
         } />
       </Routes>
       <AddBoatDialog open={dialogOpen} onOpenChange={setDialogOpen} />

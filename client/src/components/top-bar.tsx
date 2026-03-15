@@ -27,6 +27,7 @@ export function TopBar({ onAddBoat, dark, onToggleDark, connected }: TopBarProps
         <nav className="flex items-center gap-1">
           <NavLink to="/" end className={linkClass}>Map</NavLink>
           <NavLink to="/analytics" className={linkClass}>Analytics</NavLink>
+          <NavLink to="/admin" className={linkClass}>Admin</NavLink>
         </nav>
       </div>
       <div className="flex items-center gap-3">

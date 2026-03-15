@@ -4,12 +4,20 @@ import logging
 import time
 from uuid import uuid4
 
+import cv2
+import numpy as np
 from fastapi import FastAPI, HTTPException, Query
+from psycopg import errors
 
 from db import get_conn, init_db
 from detector import detect
 from drift_predictor import predict_drift_days
 from models import (
+    BoatAdminCreateInput,
+    BoatAdminDeleteResponse,
+    BoatAdminResponse,
+    BoatAdminUpdateInput,
+    DetectionInput,
     BoatPositionPointResponse,
     BoatRegisterInput,
     BoatRegisterResponse,
@@ -42,6 +50,65 @@ def project_detection_to_geo(
     return boat_lat, boat_lon
 
 
+def annotate_image_with_detections(
+    image_payload: str,
+    detections: list[DetectionInput],
+) -> str:
+    try:
+        image_bytes = base64.b64decode(image_payload)
+        arr = np.frombuffer(image_bytes, dtype=np.uint8)
+        image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if image is None:
+            return image_payload
+
+        height, width = image.shape[:2]
+        for det in detections:
+            x1 = max(0, min(width - 1, int(round(det.bbox[0] * width))))
+            y1 = max(0, min(height - 1, int(round(det.bbox[1] * height))))
+            x2 = max(0, min(width - 1, int(round(det.bbox[2] * width))))
+            y2 = max(0, min(height - 1, int(round(det.bbox[3] * height))))
+            if x2 <= x1 or y2 <= y1:
+                continue
+
+            cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 255), 2)
+            label = f"trash {det.confidence:.2f}"
+            (text_width, text_height), baseline = cv2.getTextSize(
+                label,
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                1,
+            )
+            label_top = max(0, y1 - text_height - baseline - 6)
+            label_bottom = max(0, y1 - 2)
+            label_right = min(width - 1, x1 + text_width + 8)
+
+            cv2.rectangle(
+                image,
+                (x1, label_top),
+                (label_right, label_bottom),
+                (0, 255, 255),
+                -1,
+            )
+            cv2.putText(
+                image,
+                label,
+                (x1 + 4, max(text_height + 2, label_bottom - baseline - 2)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 0, 0),
+                1,
+                cv2.LINE_AA,
+            )
+
+        success, encoded = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), 90])
+        if not success:
+            return image_payload
+        return base64.b64encode(encoded.tobytes()).decode("ascii")
+    except Exception:
+        logger.exception("Failed to annotate detection image")
+        return image_payload
+
+
 @app.post("/api/boats/register")
 def register_boat(body: BoatRegisterInput) -> BoatRegisterResponse:
     boat_id = str(uuid4())
@@ -65,9 +132,165 @@ def register_boat(body: BoatRegisterInput) -> BoatRegisterResponse:
     )
 
 
+@app.get("/api/admin/boats")
+def admin_get_boats() -> dict:
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    b.id,
+                    b.name,
+                    b.weight_class,
+                    b.created_at,
+                    bs.timestamp AS last_reported_at
+                FROM boats b
+                LEFT JOIN boat_states bs ON bs.boat_id = b.id
+                ORDER BY bs.timestamp DESC NULLS LAST, b.created_at DESC;
+                """
+            )
+            rows = cur.fetchall()
+
+    boats = [
+        BoatAdminResponse(
+            boat_id=row[0],
+            name=row[1],
+            weight_class=row[2],
+            created_at=row[3],
+            last_reported_at=row[4],
+        )
+        for row in rows
+    ]
+    return {"boats": boats}
+
+
+@app.post("/api/admin/boats")
+def admin_create_boat(body: BoatAdminCreateInput) -> BoatAdminResponse:
+    boat_id = body.boat_id.strip() if body.boat_id else str(uuid4())
+    if not boat_id:
+        raise HTTPException(status_code=400, detail="boat_id cannot be empty")
+
+    created_at = time.time()
+
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO boats (id, name, weight_class, created_at)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id, name, weight_class, created_at;
+                    """,
+                    (boat_id, body.name, body.weight_class, created_at),
+                )
+                row = cur.fetchone()
+            conn.commit()
+    except errors.UniqueViolation as exc:
+        raise HTTPException(status_code=409, detail="boat_id already exists") from exc
+
+    return BoatAdminResponse(
+        boat_id=row[0],
+        name=row[1],
+        weight_class=row[2],
+        created_at=row[3],
+        last_reported_at=None,
+    )
+
+
+@app.put("/api/admin/boats/{boat_id}")
+def admin_update_boat(boat_id: str, body: BoatAdminUpdateInput) -> BoatAdminResponse:
+    if body.name is None and body.weight_class is None:
+        raise HTTPException(status_code=400, detail="name or weight_class is required")
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE boats
+                SET
+                    name = COALESCE(%s, name),
+                    weight_class = COALESCE(%s, weight_class)
+                WHERE id = %s
+                RETURNING id, name, weight_class, created_at;
+                """,
+                (body.name, body.weight_class, boat_id),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="boat not found")
+
+            cur.execute(
+                """
+                SELECT timestamp
+                FROM boat_states
+                WHERE boat_id = %s;
+                """,
+                (boat_id,),
+            )
+            state_row = cur.fetchone()
+        conn.commit()
+
+    return BoatAdminResponse(
+        boat_id=row[0],
+        name=row[1],
+        weight_class=row[2],
+        created_at=row[3],
+        last_reported_at=state_row[0] if state_row else None,
+    )
+
+
+@app.delete("/api/admin/boats/{boat_id}")
+def admin_delete_boat(
+    boat_id: str,
+    purge_data: bool = Query(default=True),
+) -> BoatAdminDeleteResponse:
+    deleted_state_rows = 0
+    deleted_position_rows = 0
+    deleted_detection_rows = 0
+    deleted_boat_rows = 0
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            if purge_data:
+                cur.execute("DELETE FROM boat_states WHERE boat_id = %s;", (boat_id,))
+                deleted_state_rows = cur.rowcount
+
+                cur.execute("DELETE FROM boat_positions WHERE boat_id = %s;", (boat_id,))
+                deleted_position_rows = cur.rowcount
+
+                cur.execute("DELETE FROM trash_detections WHERE boat_id = %s;", (boat_id,))
+                deleted_detection_rows = cur.rowcount
+
+            cur.execute("DELETE FROM boats WHERE id = %s;", (boat_id,))
+            deleted_boat_rows = cur.rowcount
+        conn.commit()
+
+    deleted_total = (
+        deleted_boat_rows
+        + deleted_state_rows
+        + deleted_position_rows
+        + deleted_detection_rows
+    )
+    if deleted_total == 0:
+        raise HTTPException(status_code=404, detail="boat not found")
+
+    return BoatAdminDeleteResponse(
+        boat_id=boat_id,
+        deleted_boat_rows=deleted_boat_rows,
+        deleted_state_rows=deleted_state_rows,
+        deleted_position_rows=deleted_position_rows,
+        deleted_detection_rows=deleted_detection_rows,
+    )
+
+
 @app.post("/api/boats/report")
 def report_boat(report: BoatReport) -> dict:
     saved_detections: list[DetectionSaved] = []
+    image_payload = report.image.strip()
+    annotated_image_payload = image_payload
+    if image_payload.startswith("data:") and "," in image_payload:
+        image_payload = image_payload.split(",", 1)[1]
+        annotated_image_payload = image_payload
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -110,14 +333,29 @@ def report_boat(report: BoatReport) -> dict:
                 """,
                 (report.timestamp - POSITION_HISTORY_RETENTION_SECONDS,),
             )
-
             detections = []
-            if report.image:
+            if image_payload:
                 try:
-                    image_bytes = base64.b64decode(report.image)
+                    image_bytes = base64.b64decode(image_payload)
+                    s = time.perf_counter()
+                    #print(f"Start detect time {s}")
                     detections = detect(image_bytes)
+                    print(f"End detect time {time.perf_counter()-s}")
+                    print(f"Detections {detections}")
                 except Exception:
                     logger.exception("Failed to decode/detect image for boat %s", report.boat_id)
+                annotated_image_payload = annotate_image_with_detections(
+                    image_payload=image_payload,
+                    detections=detections,
+                )
+                cur.execute(
+                    """
+                    UPDATE boats
+                    SET last_image = %s
+                    WHERE id = %s;
+                    """,
+                    (annotated_image_payload, report.boat_id),
+                )
 
             for det in detections:
                 projected_lat, projected_lon = project_detection_to_geo(
@@ -256,7 +494,8 @@ def get_boats() -> dict:
                     bs.heading,
                     bs.timestamp,
                     b.name,
-                    b.weight_class
+                    b.weight_class,
+                    b.last_image
                 FROM boat_states bs
                 LEFT JOIN boats b ON bs.boat_id = b.id
                 ORDER BY bs.timestamp DESC;
@@ -273,6 +512,7 @@ def get_boats() -> dict:
             "timestamp": row[4],
             "name": row[5] if row[5] else row[0],
             "weight_class": row[6] if row[6] else "light",
+            "image": f"data:image/jpeg;base64,{row[7]}" if row[7] else None,
         }
         for row in rows
     ]

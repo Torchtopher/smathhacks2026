@@ -11,24 +11,31 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from vision.vision import decode_image_bytes, detect_image, summarize_results
-
 DEFAULT_API_BASE = os.getenv("HOLOOCEAN_API_BASE", "http://localhost:8900")
 DEFAULT_OUTPUT_IMAGE = Path("runs") / "holoocean" / "latest.jpg"
-DEFAULT_PREDICT_DIR = Path("runs") / "holoocean" / "predict"
-DEFAULT_BACKEND_API_BASE = os.getenv("BACKEND_API_BASE", "http://10.50.52.60:8000") #http://localhost:8000"
+DEFAULT_BACKEND_API_BASE = os.getenv("BACKEND_API_BASE", "http://localhost:8000") #"http://10.50.52.60:8000
 DEFAULT_BOAT_ID_FILE = Path("runs") / "holoocean" / "boat_id.txt"
 DEBUG_ENABLED = os.getenv("CLIENT_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
 DEFAULT_FAKE_GPS_ORIGIN_LAT = float(os.getenv("FAKE_GPS_ORIGIN_LAT", "35.2"))
 DEFAULT_FAKE_GPS_ORIGIN_LON = float(os.getenv("FAKE_GPS_ORIGIN_LON", "-74.8"))
+# HoloOcean positions are meter-like world units; convert to miles for geo projection.
 DEFAULT_FAKE_GPS_MILES_PER_SIM_METER = float(
-    os.getenv("FAKE_GPS_MILES_PER_SIM_METER", "100.0")
+    os.getenv("FAKE_GPS_MILES_PER_SIM_METER", "0.000621371")
 )
 DEFAULT_FAKE_GPS_REFERENCE_POSITION = (
     float(os.getenv("FAKE_GPS_REFERENCE_X", "-18.03758430480957")),
     float(os.getenv("FAKE_GPS_REFERENCE_Y", "1.8304139375686646")),
     float(os.getenv("FAKE_GPS_REFERENCE_Z", "0.17063309252262115")),
 )
+GPS_ORIGIN_PRESETS: dict[str, tuple[float, float, str]] = {
+    "env": (
+        DEFAULT_FAKE_GPS_ORIGIN_LAT,
+        DEFAULT_FAKE_GPS_ORIGIN_LON,
+        "Environment/default origin",
+    ),
+    "north-carolina": (35.2, -74.8, "Off the North Carolina coast"),
+    "california-edge": (36.8, -124.2, "Near the California ocean edge"),
+}
 
 
 def fetch_latest_frame(api_base: str, wait_ms: int = 5000) -> dict[str, Any]:
@@ -53,8 +60,12 @@ def fetch_latest_frame(api_base: str, wait_ms: int = 5000) -> dict[str, Any]:
 
 
 def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
-    # Keep stdout limited to the exact JSON body being sent.
-    print(json.dumps(payload, indent=2), flush=True)
+    # Keep stdout useful for debugging without leaking base64 image blobs.
+    payload_for_log = dict(payload)
+    image_value = payload_for_log.get("image")
+    if isinstance(image_value, str):
+        payload_for_log["image"] = f"<redacted base64 image, {len(image_value)} chars>"
+    print(json.dumps(payload_for_log, indent=2), flush=True)
     request = Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
@@ -84,7 +95,13 @@ def write_image(image_bytes: bytes, output_path: Path) -> Path:
     return output_path
 
 
-def synthetic_gps_from_position(position: list[float] | None) -> dict[str, Any] | None:
+def synthetic_gps_from_position(
+    position: list[float] | None,
+    *,
+    origin_lat: float = DEFAULT_FAKE_GPS_ORIGIN_LAT,
+    origin_lon: float = DEFAULT_FAKE_GPS_ORIGIN_LON,
+    origin_label: str = "Environment/default origin",
+) -> dict[str, Any] | None:
     if not position or len(position) < 2:
         return None
 
@@ -97,20 +114,29 @@ def synthetic_gps_from_position(position: list[float] | None) -> dict[str, Any] 
 
     miles_per_degree_lat = 69.0
     miles_per_degree_lon = 69.0 * max(
-        0.01, abs(math.cos(math.radians(DEFAULT_FAKE_GPS_ORIGIN_LAT)))
+        0.01, abs(math.cos(math.radians(origin_lat)))
     )
 
-    lat = DEFAULT_FAKE_GPS_ORIGIN_LAT + (delta_y_miles / miles_per_degree_lat)
-    lon = DEFAULT_FAKE_GPS_ORIGIN_LON + (delta_x_miles / miles_per_degree_lon)
+    lat = origin_lat + (delta_y_miles / miles_per_degree_lat)
+    lon = origin_lon + (delta_x_miles / miles_per_degree_lon)
 
     return {
         "coords": [lat, lon],
         "altitude_offset_m": sim_z - ref_z,
-        "origin": [DEFAULT_FAKE_GPS_ORIGIN_LAT, DEFAULT_FAKE_GPS_ORIGIN_LON],
+        "origin": [origin_lat, origin_lon],
+        "origin_label": origin_label,
         "reference_position": list(DEFAULT_FAKE_GPS_REFERENCE_POSITION),
         "miles_per_sim_meter": DEFAULT_FAKE_GPS_MILES_PER_SIM_METER,
-        "note": "Synthetic GPS derived from sim position, anchored off the North Carolina coast.",
+        "note": f"Synthetic GPS derived from sim position, anchored at {origin_label}.",
     }
+
+
+def resolve_gps_origin(preset: str) -> tuple[float, float, str]:
+    try:
+        return GPS_ORIGIN_PRESETS[preset]
+    except KeyError as exc:
+        supported = ", ".join(GPS_ORIGIN_PRESETS.keys())
+        raise RuntimeError(f"Unknown --gps-origin-preset '{preset}'. Supported: {supported}") from exc
 
 
 def load_cached_boat_id(path: Path) -> str | None:
@@ -151,26 +177,13 @@ def ensure_boat_id(
     return boat_id, registration
 
 
-def flatten_detections(detection_summary: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    flattened: list[dict[str, Any]] = []
-    for result in detection_summary:
-        for detection in result.get("detections", []):
-            flattened.append(
-                {
-                    "confidence": float(detection["confidence"]),
-                    "bbox": [float(value) for value in detection["xyxy"]],
-                }
-            )
-    return flattened
-
-
 def send_backend_report(
     *,
     backend_base: str,
     boat_id: str,
     frame: dict[str, Any],
     gps: list[float],
-    detection_summary: list[dict[str, Any]],
+    image_bytes: bytes,
 ) -> dict[str, Any]:
     url = f"{backend_base.rstrip('/')}/api/boats/report"
     payload = {
@@ -179,14 +192,18 @@ def send_backend_report(
         "gps_lat": float(gps[0]),
         "gps_lon": float(gps[1]),
         "heading": float(frame.get("bearing_deg") or 0.0),
-        "detections": flatten_detections(detection_summary),
+        # Server handles detection/processing from the uploaded frame.
+        "image": base64.b64encode(image_bytes).decode("ascii"),
     }
     return post_json(url, payload)
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Fetch the latest HoloOcean frame and pose metadata, then run YOLO detection."
+        description=(
+            "Fetch the latest HoloOcean frame and pose metadata, "
+            "then optionally report it to the backend for server-side detection."
+        )
     )
     parser.add_argument(
         "--api-base",
@@ -224,44 +241,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="How long to wait for a frame from HoloOcean (default: 5000)",
     )
     parser.add_argument(
-        "--weights",
-        help="Path to YOLO weights. Defaults to trained trash model if present.",
-    )
-    parser.add_argument(
-        "--conf",
-        type=float,
-        default=0.25,
-        help="Detection confidence threshold (default: 0.25)",
-    )
-    parser.add_argument(
         "--output-image",
         default=str(DEFAULT_OUTPUT_IMAGE),
         help=f"Where to save the fetched image (default: {DEFAULT_OUTPUT_IMAGE})",
     )
     parser.add_argument(
-        "--predict-dir",
-        default=str(DEFAULT_PREDICT_DIR),
-        help=f"Where to save annotated predictions (default: {DEFAULT_PREDICT_DIR})",
-    )
-    parser.add_argument(
-        "--predict-name",
-        default="latest",
-        help="Prediction run name inside predict-dir (default: latest)",
-    )
-    parser.add_argument(
-        "--show",
-        action="store_true",
-        help="Display detections in a window",
-    )
-    parser.add_argument(
-        "--no-save-predictions",
-        action="store_true",
-        help="Skip saving annotated prediction images",
+        "--gps-origin-preset",
+        choices=tuple(GPS_ORIGIN_PRESETS.keys()),
+        default="env",
+        help=(
+            "Synthetic GPS anchor preset: env, north-carolina, or california-edge "
+            "(default: env)."
+        ),
     )
     parser.add_argument(
         "--loop",
         action="store_true",
-        help="Continuously fetch, detect, and optionally report to the backend",
+        help="Continuously fetch and optionally report to the backend",
     )
     parser.add_argument(
         "--interval-seconds",
@@ -272,7 +268,13 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run_once(args: argparse.Namespace, cached_backend_boat_id: str | None) -> tuple[dict[str, Any], str | None]:
+def run_once(
+    args: argparse.Namespace,
+    cached_backend_boat_id: str | None,
+    gps_origin_lat: float,
+    gps_origin_lon: float,
+    gps_origin_label: str,
+) -> tuple[dict[str, Any], str | None]:
     frame = fetch_latest_frame(args.api_base, wait_ms=args.wait_ms)
     debug(
         "Fetched frame "
@@ -280,29 +282,17 @@ def run_once(args: argparse.Namespace, cached_backend_boat_id: str | None) -> tu
         f"position={frame.get('position')}"
     )
     output_image = write_image(frame["image_bytes"], Path(args.output_image))
-    decoded_image = decode_image_bytes(frame["image_bytes"])
-    predict_dir = Path(args.predict_dir).resolve()
-    synthetic_gps = synthetic_gps_from_position(frame.get("position"))
+    synthetic_gps = synthetic_gps_from_position(
+        frame.get("position"),
+        origin_lat=gps_origin_lat,
+        origin_lon=gps_origin_lon,
+        origin_label=gps_origin_label,
+    )
     if synthetic_gps is not None:
         debug(
             "Synthetic GPS "
             f"lat={synthetic_gps['coords'][0]:.6f} lon={synthetic_gps['coords'][1]:.6f}"
         )
-
-    results = detect_image(
-        decoded_image,
-        weights=args.weights,
-        conf=args.conf,
-        save=not args.no_save_predictions,
-        show=args.show,
-        project=predict_dir,
-        name=args.predict_name,
-    )
-    detection_summary = summarize_results(results)
-    debug(
-        "Detection summary "
-        f"images={len(detection_summary)} detections={len(flatten_detections(detection_summary))}"
-    )
 
     backend_boat_id = cached_backend_boat_id
     backend_registration = None
@@ -329,7 +319,7 @@ def run_once(args: argparse.Namespace, cached_backend_boat_id: str | None) -> tu
             boat_id=backend_boat_id,
             frame=frame,
             gps=synthetic_gps["coords"],
-            detection_summary=detection_summary,
+            image_bytes=frame["image_bytes"],
         )
         debug(
             f"Reported boat_id={backend_boat_id} "
@@ -351,7 +341,6 @@ def run_once(args: argparse.Namespace, cached_backend_boat_id: str | None) -> tu
         "angles_deg": frame.get("angles_deg"),
         "bearing_deg": frame.get("bearing_deg"),
         "saved_image": str(output_image),
-        "detections": detection_summary,
         "backend_boat_id": backend_boat_id,
         "backend_registration": backend_registration,
         "backend_report": backend_report,
@@ -361,18 +350,29 @@ def run_once(args: argparse.Namespace, cached_backend_boat_id: str | None) -> tu
 
 def main() -> None:
     args = _build_parser().parse_args()
+    gps_origin_lat, gps_origin_lon, gps_origin_label = resolve_gps_origin(
+        args.gps_origin_preset
+    )
     backend_boat_id = None
     iteration = 0
     debug(
         f"Client starting backend_baseloop={args.loop} interval_seconds={args.interval_seconds} "
-        f"backend_base={args.backend_base or 'none'}"
+        f"backend_base={args.backend_base or 'none'} "
+        f"gps_origin_preset={args.gps_origin_preset} "
+        f"gps_origin=({gps_origin_lat:.6f},{gps_origin_lon:.6f})"
     )
 
     while True:
         iteration += 1
         debug(f"Starting iteration={iteration}")
         try:
-            _, backend_boat_id = run_once(args, backend_boat_id)
+            _, backend_boat_id = run_once(
+                args,
+                backend_boat_id,
+                gps_origin_lat,
+                gps_origin_lon,
+                gps_origin_label,
+            )
         except Exception as exc:
             debug(f"Iteration failed iteration={iteration} error={exc}")
             if not args.loop:
