@@ -172,6 +172,45 @@ def build_forward_command(buffer_shape: tuple[int, ...]) -> np.ndarray:
     return command
 
 
+def build_differential_command(
+    buffer_shape: tuple[int, ...],
+    forward: float,
+    diff: float,
+) -> np.ndarray:
+    command = np.zeros(buffer_shape, dtype=np.float32)
+    flat = command.reshape(-1)
+    action_size = int(flat.size)
+
+    if action_size == 1:
+        flat[0] = forward
+    elif action_size == 2:
+        flat[0] = forward - diff
+        flat[1] = forward + diff
+    elif action_size >= 4:
+        flat[0] = forward - diff
+        flat[1] = forward + diff
+        flat[2] = forward - diff
+        flat[3] = forward + diff
+    else:
+        flat[:] = forward
+
+    return command
+
+
+def build_circle_command(buffer_shape: tuple[int, ...]) -> np.ndarray:
+    forward = float(os.getenv("CIRCLE_THRUST", "220.0"))
+    # Smaller diff -> wider turn radius.
+    diff = float(os.getenv("CIRCLE_DIFF", "60.0"))
+    return build_differential_command(buffer_shape, forward=forward, diff=diff)
+
+
+def build_line_command(buffer_shape: tuple[int, ...], tick: int) -> np.ndarray:
+    forward = float(os.getenv("LINE_THRUST", "220.0"))
+    half_period_ticks = max(1, int(os.getenv("LINE_HALF_PERIOD_TICKS", "180")))
+    direction = 1.0 if ((tick // half_period_ticks) % 2) == 0 else -1.0
+    return build_differential_command(buffer_shape, forward=direction * forward, diff=0.0)
+
+
 @dataclass
 class FrameData:
     jpeg: Optional[bytes] = None
@@ -303,20 +342,60 @@ class HoloOceanViewportService:
                 tick = 0
                 logged_frame_shape = False
 
-                # Keep the agent moving forward by repeatedly sending a forward command.
-                forward_command = None
-                should_send_command = True
-                try:
-                    buffer_shape = tuple(agent.action_space.buffer_shape)
-                    forward_command = build_forward_command(buffer_shape)
-                    logger.info(
-                        "Motion command shape=%s command=%s",
-                        buffer_shape,
-                        np.asarray(forward_command).reshape(-1).tolist(),
+                default_circle_agent = agent_names[0]
+                default_line_agent = agent_names[1] if len(agent_names) > 1 else agent_names[0]
+                circle_agent_name = os.getenv("CIRCLE_AGENT_NAME", default_circle_agent)
+                if circle_agent_name not in env.agents:
+                    logger.warning(
+                        "CIRCLE_AGENT_NAME='%s' not found; using '%s'",
+                        circle_agent_name,
+                        default_circle_agent,
                     )
-                except Exception:
-                    should_send_command = False
-                    logger.warning("Could not infer action size; skipping motion control")
+                    circle_agent_name = default_circle_agent
+                line_agent_name = os.getenv("LINE_AGENT_NAME", default_line_agent)
+                if line_agent_name not in env.agents:
+                    logger.warning(
+                        "LINE_AGENT_NAME='%s' not found; using '%s'",
+                        line_agent_name,
+                        default_line_agent,
+                    )
+                    line_agent_name = default_line_agent
+                if line_agent_name == circle_agent_name and len(agent_names) > 1:
+                    for candidate in agent_names:
+                        if candidate != circle_agent_name:
+                            line_agent_name = candidate
+                            break
+
+                motion_profiles: dict[str, str] = {circle_agent_name: "circle"}
+                motion_profiles[line_agent_name] = "line"
+                motion_buffer_shapes: dict[str, tuple[int, ...]] = {}
+                disabled_motion_agents: set[str] = set()
+                for motion_agent_name, profile in motion_profiles.items():
+                    motion_agent = env.agents.get(motion_agent_name)
+                    if motion_agent is None:
+                        logger.warning(
+                            "Skipping motion profile '%s' for missing agent '%s'",
+                            profile,
+                            motion_agent_name,
+                        )
+                        disabled_motion_agents.add(motion_agent_name)
+                        continue
+                    try:
+                        buffer_shape = tuple(motion_agent.action_space.buffer_shape)
+                        motion_buffer_shapes[motion_agent_name] = buffer_shape
+                        logger.info(
+                            "Motion profile agent='%s' profile='%s' action_shape=%s",
+                            motion_agent_name,
+                            profile,
+                            buffer_shape,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Could not infer action size for '%s'; disabling motion profile '%s'",
+                            motion_agent_name,
+                            profile,
+                        )
+                        disabled_motion_agents.add(motion_agent_name)
 
                 missing_viewport_ticks = 0
                 max_missing_viewport_ticks = int(os.getenv("MAX_MISSING_VIEWPORT_TICKS", "300"))
@@ -335,16 +414,25 @@ class HoloOceanViewportService:
                     self._ready.notify_all()
 
                 while not self._stop_event.is_set():
-                    if (
-                        should_send_command
-                        and act_agent_name is not None
-                        and forward_command is not None
-                    ):
+                    for motion_agent_name, profile in motion_profiles.items():
+                        if motion_agent_name in disabled_motion_agents:
+                            continue
+                        buffer_shape = motion_buffer_shapes.get(motion_agent_name)
+                        if buffer_shape is None:
+                            continue
                         try:
-                            env.act(act_agent_name, forward_command)
+                            if profile == "circle":
+                                motion_command = build_circle_command(buffer_shape)
+                            else:
+                                motion_command = build_line_command(buffer_shape, tick=tick)
+                            env.act(motion_agent_name, motion_command)
                         except Exception:
-                            logger.exception("env.act failed; disabling motion control")
-                            should_send_command = False
+                            logger.exception(
+                                "env.act failed for agent '%s' with profile '%s'; disabling it",
+                                motion_agent_name,
+                                profile,
+                            )
+                            disabled_motion_agents.add(motion_agent_name)
 
                     state = env.tick()
                     tick += 1
