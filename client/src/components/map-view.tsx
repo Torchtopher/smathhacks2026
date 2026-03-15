@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react"
-import { MapContainer, TileLayer } from "react-leaflet"
+import { MapContainer, TileLayer, ScaleControl } from "react-leaflet"
 import { BoatMarkers } from "@/components/boat-markers"
 import { DetectionLayer } from "@/components/detection-layer"
 import { StatsOverlay } from "@/components/stats-overlay"
@@ -48,6 +48,7 @@ export function MapView({
           url={dark ? TILE_DARK : TILE_LIGHT}
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
         />
+        <ScaleControl position="bottomleft" imperial={false} />
         <BoatMarkers boats={boats} selectedBoatId={selectedBoatId} onBoatClick={onBoatClick} dark={dark} />
         <DetectionLayer detections={filteredDetections} timeHours={timeHours} />
       </MapContainer>
