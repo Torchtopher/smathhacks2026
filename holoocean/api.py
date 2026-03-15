@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
+from pydantic import BaseModel
 
 import holoocean
 
@@ -29,6 +30,35 @@ def env_bool(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def parse_vector3_env(
+    name: str, default: tuple[float, float, float] = (0.0, 0.0, 0.0)
+) -> tuple[float, float, float]:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+
+    parts = [part.strip() for part in raw.split(",")]
+    if len(parts) != 3:
+        logger.warning(
+            "%s must be 3 comma-separated floats, got %r. Using default %s.",
+            name,
+            raw,
+            default,
+        )
+        return default
+
+    try:
+        return float(parts[0]), float(parts[1]), float(parts[2])
+    except ValueError:
+        logger.warning(
+            "%s must be 3 comma-separated floats, got %r. Using default %s.",
+            name,
+            raw,
+            default,
+        )
+        return default
 
 
 def find_viewport_key(state: dict, preferred_name: str) -> Optional[str]:
@@ -180,8 +210,8 @@ def build_circle_command(buffer_shape: tuple[int, ...]) -> np.ndarray:
 
 
 def build_line_command(buffer_shape: tuple[int, ...], tick: int) -> np.ndarray:
-    forward = float(os.getenv("LINE_THRUST", "220.0"))
-    half_period_ticks = max(1, int(os.getenv("LINE_HALF_PERIOD_TICKS", "420")))
+    forward = float(os.getenv("LINE_THRUST", "320.0"))
+    half_period_ticks = max(1, int(os.getenv("LINE_HALF_PERIOD_TICKS", "700")))
     direction = 1.0 if ((tick // half_period_ticks) % 2) == 0 else -1.0
     return build_differential_command(buffer_shape, forward=direction * forward, diff=0.0)
 
@@ -206,6 +236,11 @@ class FrameData:
     error_traceback: Optional[str] = None
 
 
+class ViewportOffsetUpdate(BaseModel):
+    position_offset: Optional[tuple[float, float, float]] = None
+    angles_offset_deg: Optional[tuple[float, float, float]] = None
+
+
 class HoloOceanViewportService:
     def __init__(
         self,
@@ -216,6 +251,8 @@ class HoloOceanViewportService:
         viewport_height: int,
         holoocean_verbose: bool,
         holoocean_show_viewport: bool,
+        viewport_position_offset: tuple[float, float, float] = (0.0, 0.0, 5.0),
+        viewport_angle_offset_deg: tuple[float, float, float] = (90.0, -80.0, 90.0),
         jpeg_quality: int = 80,
     ):
         self.scenario_name = scenario_name
@@ -225,6 +262,12 @@ class HoloOceanViewportService:
         self.viewport_height = int(viewport_height)
         self.holoocean_verbose = bool(holoocean_verbose)
         self.holoocean_show_viewport = bool(holoocean_show_viewport)
+        self.viewport_position_offset = np.asarray(
+            viewport_position_offset, dtype=np.float64
+        ).reshape(3)
+        self.viewport_angle_offset_deg = np.asarray(
+            viewport_angle_offset_deg, dtype=np.float64
+        ).reshape(3)
         self.jpeg_quality = int(np.clip(jpeg_quality, 1, 100))
 
         self._stop_event = threading.Event()
@@ -234,6 +277,44 @@ class HoloOceanViewportService:
         self._frame = FrameData()
         self._agent_names: list[str] = []
         self._requested_viewport_agent_index: Optional[int] = None
+
+    @staticmethod
+    def _coerce_vector3(
+        value: tuple[float, float, float] | list[float] | np.ndarray,
+        field_name: str,
+    ) -> np.ndarray:
+        arr = np.asarray(value, dtype=np.float64).reshape(-1)
+        if arr.size != 3:
+            raise ValueError(f"{field_name} must have exactly 3 numeric values")
+        if not np.all(np.isfinite(arr)):
+            raise ValueError(f"{field_name} values must be finite numbers")
+        return arr.reshape(3)
+
+    def viewport_offsets(self) -> tuple[list[float], list[float]]:
+        with self._ready:
+            position_offset = self.viewport_position_offset.copy()
+            angles_offset = self.viewport_angle_offset_deg.copy()
+        return to_float_list(position_offset), to_float_list(angles_offset)
+
+    def set_viewport_offsets(
+        self,
+        *,
+        position_offset: Optional[tuple[float, float, float] | list[float]] = None,
+        angles_offset_deg: Optional[tuple[float, float, float] | list[float]] = None,
+    ) -> tuple[list[float], list[float]]:
+        with self._ready:
+            if position_offset is not None:
+                self.viewport_position_offset = self._coerce_vector3(
+                    position_offset, "position_offset"
+                )
+            if angles_offset_deg is not None:
+                self.viewport_angle_offset_deg = self._coerce_vector3(
+                    angles_offset_deg, "angles_offset_deg"
+                )
+            current_position = self.viewport_position_offset.copy()
+            current_angles = self.viewport_angle_offset_deg.copy()
+            self._ready.notify_all()
+        return to_float_list(current_position), to_float_list(current_angles)
 
     def _validate_agent_index_locked(self, agent_index: int) -> None:
         if agent_index < -1:
@@ -319,32 +400,9 @@ class HoloOceanViewportService:
                 tick = 0
                 logged_frame_shape = False
 
-                default_circle_agent = agent_names[0]
-                default_line_agent = agent_names[1] if len(agent_names) > 1 else agent_names[0]
-                circle_agent_name = os.getenv("CIRCLE_AGENT_NAME", default_circle_agent)
-                if circle_agent_name not in env.agents:
-                    logger.warning(
-                        "CIRCLE_AGENT_NAME='%s' not found; using '%s'",
-                        circle_agent_name,
-                        default_circle_agent,
-                    )
-                    circle_agent_name = default_circle_agent
-                line_agent_name = os.getenv("LINE_AGENT_NAME", default_line_agent)
-                if line_agent_name not in env.agents:
-                    logger.warning(
-                        "LINE_AGENT_NAME='%s' not found; using '%s'",
-                        line_agent_name,
-                        default_line_agent,
-                    )
-                    line_agent_name = default_line_agent
-                if line_agent_name == circle_agent_name and len(agent_names) > 1:
-                    for candidate in agent_names:
-                        if candidate != circle_agent_name:
-                            line_agent_name = candidate
-                            break
-
-                motion_profiles: dict[str, str] = {circle_agent_name: "circle"}
-                motion_profiles[line_agent_name] = "line"
+                motion_profiles: dict[str, str] = {
+                    motion_agent_name: "line" for motion_agent_name in agent_names
+                }
                 motion_buffer_shapes: dict[str, tuple[int, ...]] = {}
                 disabled_motion_agents: set[str] = set()
                 for motion_agent_name, profile in motion_profiles.items():
@@ -398,10 +456,7 @@ class HoloOceanViewportService:
                         if buffer_shape is None:
                             continue
                         try:
-                            if profile == "circle":
-                                motion_command = build_circle_command(buffer_shape)
-                            else:
-                                motion_command = build_line_command(buffer_shape, tick=tick)
+                            motion_command = build_line_command(buffer_shape, tick=tick)
                             env.act(motion_agent_name, motion_command)
                         except Exception:
                             logger.exception(
@@ -421,6 +476,9 @@ class HoloOceanViewportService:
                     requested_viewport_agent_name = None
                     target_pose_key = None
                     target_pose = None
+                    with self._ready:
+                        viewport_position_offset = self.viewport_position_offset.copy()
+                        viewport_angle_offset_deg = self.viewport_angle_offset_deg.copy()
                     if requested_viewport_agent_index is not None:
                         if requested_viewport_agent_index >= len(agent_names):
                             requested_viewport_agent_index = len(agent_names) - 1
@@ -444,8 +502,15 @@ class HoloOceanViewportService:
                             )
 
                         if target_pose is not None:
-                            viewport_position = to_float_list(target_pose[:3, 3])
+                            viewport_position_vec = (
+                                np.asarray(target_pose[:3, 3], dtype=np.float64).reshape(3)
+                                + viewport_position_offset
+                            )
+                            viewport_position = to_float_list(viewport_position_vec)
                             roll, pitch, yaw = euler_zyx_deg_from_rotation(target_pose[:3, :3])
+                            roll += float(viewport_angle_offset_deg[0])
+                            pitch += float(viewport_angle_offset_deg[1])
+                            yaw += float(viewport_angle_offset_deg[2])
                             try:
                                 env.move_viewport(
                                     viewport_position,
@@ -643,6 +708,12 @@ VIEWPORT_WIDTH = int(os.getenv("VIEWPORT_WIDTH", "1280"))
 VIEWPORT_HEIGHT = int(os.getenv("VIEWPORT_HEIGHT", "720"))
 HOLOOCEAN_VERBOSE = env_bool("HOLOOCEAN_VERBOSE", False)
 HOLOOCEAN_SHOW_VIEWPORT = env_bool("HOLOOCEAN_SHOW_VIEWPORT", True)
+VIEWPORT_POSITION_OFFSET = parse_vector3_env(
+    "VIEWPORT_POSITION_OFFSET", default=(0.0, 0.0, 5.0)
+)
+VIEWPORT_ANGLE_OFFSET_DEG = parse_vector3_env(
+    "VIEWPORT_ANGLE_OFFSET_DEG", default=(90.0, -80.0, 90.0)
+)
 JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "90"))
 
 viewport_service = HoloOceanViewportService(
@@ -653,6 +724,8 @@ viewport_service = HoloOceanViewportService(
     viewport_height=VIEWPORT_HEIGHT,
     holoocean_verbose=HOLOOCEAN_VERBOSE,
     holoocean_show_viewport=HOLOOCEAN_SHOW_VIEWPORT,
+    viewport_position_offset=VIEWPORT_POSITION_OFFSET,
+    viewport_angle_offset_deg=VIEWPORT_ANGLE_OFFSET_DEG,
     jpeg_quality=JPEG_QUALITY,
 )
 
@@ -674,12 +747,15 @@ def health():
     frame = viewport_service.latest_frame(wait_ms=0)
     requested_agent_index, requested_agent_name = viewport_service.requested_viewport_agent()
     agent_names = viewport_service.agent_names()
+    viewport_position_offset, viewport_angle_offset_deg = viewport_service.viewport_offsets()
     return {
         "scenario": SCENARIO,
         "viewport_sensor_name": VIEWPORT_SENSOR_NAME,
         "pose_sensor_name": POSE_SENSOR_NAME,
         "viewport_width": VIEWPORT_WIDTH,
         "viewport_height": VIEWPORT_HEIGHT,
+        "viewport_position_offset": viewport_position_offset,
+        "viewport_angle_offset_deg": viewport_angle_offset_deg,
         "num_agents": len(agent_names),
         "agents": agent_names,
         "requested_viewport_agent_index": requested_agent_index,
@@ -716,6 +792,37 @@ def agents():
     }
 
 
+@app.get("/viewport/offset")
+def get_viewport_offset():
+    position_offset, angles_offset_deg = viewport_service.viewport_offsets()
+    return {
+        "position_offset": position_offset,
+        "angles_offset_deg": angles_offset_deg,
+    }
+
+
+@app.post("/viewport/offset")
+def set_viewport_offset(body: ViewportOffsetUpdate):
+    if body.position_offset is None and body.angles_offset_deg is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide position_offset and/or angles_offset_deg",
+        )
+
+    try:
+        position_offset, angles_offset_deg = viewport_service.set_viewport_offsets(
+            position_offset=body.position_offset,
+            angles_offset_deg=body.angles_offset_deg,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "position_offset": position_offset,
+        "angles_offset_deg": angles_offset_deg,
+    }
+
+
 @app.get("/latest.jpg")
 def latest_jpg(wait_ms: int = 0, agent_index: Optional[int] = None):
     try:
@@ -746,6 +853,7 @@ def latest_jpg(wait_ms: int = 0, agent_index: Optional[int] = None):
                 str(angles.get("yaw", "")),
             ]
         )
+    viewport_position_offset, viewport_angle_offset_deg = viewport_service.viewport_offsets()
     return Response(
         content=frame.jpeg,
         media_type="image/jpeg",
@@ -768,6 +876,12 @@ def latest_jpg(wait_ms: int = 0, agent_index: Optional[int] = None):
             "X-HoloOcean-Angles-Deg": angles_header,
             "X-HoloOcean-Bearing-Deg": (
                 "" if frame.bearing_deg is None else str(frame.bearing_deg)
+            ),
+            "X-HoloOcean-Viewport-Position-Offset": ",".join(
+                str(v) for v in viewport_position_offset
+            ),
+            "X-HoloOcean-Viewport-Angles-Offset-Deg": ",".join(
+                str(v) for v in viewport_angle_offset_deg
             ),
         },
     )
@@ -792,6 +906,7 @@ def latest(wait_ms: int = 0, include_image: bool = False, agent_index: Optional[
             ),
         )
 
+    viewport_position_offset, viewport_angle_offset_deg = viewport_service.viewport_offsets()
     body = {
         "tick": frame.tick,
         "unix_time_s": frame.unix_time_s,
@@ -807,6 +922,8 @@ def latest(wait_ms: int = 0, include_image: bool = False, agent_index: Optional[
         "position": frame.position,
         "angles_deg": frame.angles_deg,
         "bearing_deg": frame.bearing_deg,
+        "viewport_position_offset": viewport_position_offset,
+        "viewport_angles_offset_deg": viewport_angle_offset_deg,
     }
     if include_image:
         body["image_jpeg_base64"] = b64encode(frame.jpeg).decode("ascii")
