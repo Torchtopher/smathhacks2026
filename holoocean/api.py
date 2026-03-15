@@ -175,13 +175,13 @@ def build_differential_command(
 def build_circle_command(buffer_shape: tuple[int, ...]) -> np.ndarray:
     forward = float(os.getenv("CIRCLE_THRUST", "220.0"))
     # Smaller diff -> wider turn radius.
-    diff = float(os.getenv("CIRCLE_DIFF", "60.0"))
+    diff = float(os.getenv("CIRCLE_DIFF", "25.0"))
     return build_differential_command(buffer_shape, forward=forward, diff=diff)
 
 
 def build_line_command(buffer_shape: tuple[int, ...], tick: int) -> np.ndarray:
     forward = float(os.getenv("LINE_THRUST", "220.0"))
-    half_period_ticks = max(1, int(os.getenv("LINE_HALF_PERIOD_TICKS", "180")))
+    half_period_ticks = max(1, int(os.getenv("LINE_HALF_PERIOD_TICKS", "420")))
     direction = 1.0 if ((tick // half_period_ticks) % 2) == 0 else -1.0
     return build_differential_command(buffer_shape, forward=direction * forward, diff=0.0)
 
