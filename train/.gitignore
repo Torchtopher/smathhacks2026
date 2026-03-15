@@ -12,4 +12,6 @@ wheels/
 # Training artifacts
 runs/
 dataset/
+*.pt
+*.cache
 
