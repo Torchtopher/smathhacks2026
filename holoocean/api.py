@@ -3,6 +3,7 @@ import threading
 import time
 import logging
 import traceback
+import math
 from base64 import b64encode
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -52,16 +53,82 @@ def find_camera_key(state: dict) -> Optional[str]:
     return None
 
 
-def find_gps_key(state: dict) -> Optional[str]:
+def find_pose_key(state: dict, preferred_name: str) -> Optional[str]:
+    if preferred_name in state:
+        candidate = as_pose_matrix(state[preferred_name])
+        if candidate is not None:
+            return preferred_name
+
     for key, value in state.items():
-        if isinstance(value, np.ndarray) and "gps" in key.lower():
+        if "pose" not in key.lower():
+            continue
+        if as_pose_matrix(value) is not None:
             return key
+
+    for key, value in state.items():
+        if as_pose_matrix(value) is not None:
+            return key
+
     return None
+
+
+def select_agent_state(
+    raw_state: dict,
+    preferred_agent_name: Optional[str],
+) -> tuple[dict, Optional[str]]:
+    """Pick a sensor dictionary from either single-agent or multi-agent tick output."""
+    if not isinstance(raw_state, dict):
+        return {}, preferred_agent_name
+
+    if preferred_agent_name is not None:
+        preferred_state = raw_state.get(preferred_agent_name)
+        if isinstance(preferred_state, dict):
+            return preferred_state, preferred_agent_name
+
+    nested_states: list[tuple[str, dict]] = [
+        (agent_name, agent_state)
+        for agent_name, agent_state in raw_state.items()
+        if isinstance(agent_state, dict)
+    ]
+    if nested_states:
+        for agent_name, agent_state in nested_states:
+            if find_viewport_key(agent_state, "ViewportCapture") is not None:
+                return agent_state, agent_name
+            if find_camera_key(agent_state) is not None:
+                return agent_state, agent_name
+        return nested_states[0][1], nested_states[0][0]
+
+    return raw_state, preferred_agent_name
 
 
 def to_float_list(value: np.ndarray) -> list[float]:
     arr = np.asarray(value).astype(np.float64).reshape(-1)
     return [float(x) for x in arr.tolist()]
+
+
+def as_pose_matrix(value: np.ndarray) -> Optional[np.ndarray]:
+    arr = np.asarray(value, dtype=np.float64)
+    if arr.shape == (4, 4):
+        return arr
+    if arr.size == 16:
+        return arr.reshape(4, 4)
+    return None
+
+
+def euler_zyx_deg_from_rotation(rotation: np.ndarray) -> tuple[float, float, float]:
+    # ZYX intrinsic convention:
+    # yaw (Z), pitch (Y), roll (X).
+    sy = math.sqrt(rotation[0, 0] ** 2 + rotation[1, 0] ** 2)
+    singular = sy < 1e-6
+    if not singular:
+        roll = math.atan2(rotation[2, 1], rotation[2, 2])
+        pitch = math.atan2(-rotation[2, 0], sy)
+        yaw = math.atan2(rotation[1, 0], rotation[0, 0])
+    else:
+        roll = math.atan2(-rotation[1, 2], rotation[1, 1])
+        pitch = math.atan2(-rotation[2, 0], sy)
+        yaw = 0.0
+    return math.degrees(roll), math.degrees(pitch), math.degrees(yaw)
 
 
 def build_forward_command(buffer_shape: tuple[int, ...]) -> np.ndarray:
@@ -94,8 +161,11 @@ class FrameData:
     jpeg: Optional[bytes] = None
     image_key: Optional[str] = None
     image_source: str = "viewport"
-    gps_key: Optional[str] = None
-    gps: Optional[list[float]] = None
+    pose_key: Optional[str] = None
+    pose_matrix: Optional[list[list[float]]] = None
+    position: Optional[list[float]] = None
+    angles_deg: Optional[dict[str, float]] = None
+    bearing_deg: Optional[float] = None
     tick: int = 0
     unix_time_s: float = 0.0
     error: Optional[str] = None
@@ -107,6 +177,7 @@ class HoloOceanViewportService:
         self,
         scenario_name: str,
         viewport_sensor_name: str,
+        pose_sensor_name: str,
         viewport_width: int,
         viewport_height: int,
         holoocean_verbose: bool,
@@ -115,6 +186,7 @@ class HoloOceanViewportService:
     ):
         self.scenario_name = scenario_name
         self.viewport_sensor_name = viewport_sensor_name
+        self.pose_sensor_name = pose_sensor_name
         self.viewport_width = int(viewport_width)
         self.viewport_height = int(viewport_height)
         self.holoocean_verbose = bool(holoocean_verbose)
@@ -165,7 +237,9 @@ class HoloOceanViewportService:
 
                 image_key = None
                 image_source = "unknown"
-                gps_key = None
+                pose_key = None
+                capture_agent_name = act_agent_name
+                logged_capture_agent_switch = False
                 tick = 0
                 logged_frame_shape = False
 
@@ -203,18 +277,35 @@ class HoloOceanViewportService:
                     state = env.tick()
                     tick += 1
 
+                    sensor_state, resolved_agent_name = select_agent_state(
+                        state, capture_agent_name
+                    )
+                    if resolved_agent_name is not None:
+                        capture_agent_name = resolved_agent_name
+                    if (
+                        not logged_capture_agent_switch
+                        and capture_agent_name is not None
+                        and capture_agent_name != act_agent_name
+                    ):
+                        logger.info(
+                            "Reading capture sensors from '%s' while controlling '%s'",
+                            capture_agent_name,
+                            act_agent_name,
+                        )
+                        logged_capture_agent_switch = True
+
                     if image_key is None:
-                        image_key = find_viewport_key(state, self.viewport_sensor_name)
+                        image_key = find_viewport_key(sensor_state, self.viewport_sensor_name)
                         if image_key is not None:
                             image_source = "viewport"
                         else:
-                            image_key = find_camera_key(state)
+                            image_key = find_camera_key(sensor_state)
                             if image_key is not None:
                                 image_source = "camera"
-                    if gps_key is None:
-                        gps_key = find_gps_key(state)
+                    if pose_key is None:
+                        pose_key = find_pose_key(sensor_state, self.pose_sensor_name)
 
-                    if image_key is None or image_key not in state:
+                    if image_key is None or image_key not in sensor_state:
                         if not has_seen_viewport_frame:
                             missing_viewport_ticks += 1
                         if (
@@ -227,7 +318,7 @@ class HoloOceanViewportService:
                             )
                         continue
 
-                    frame = state[image_key]
+                    frame = sensor_state[image_key]
                     if not logged_frame_shape:
                         logger.info(
                             "First frame source=%s key=%s shape=%s dtype=%s",
@@ -252,17 +343,34 @@ class HoloOceanViewportService:
                     has_seen_viewport_frame = True
                     missing_viewport_ticks = 0
 
-                    gps = None
-                    if gps_key is not None and gps_key in state:
-                        gps = to_float_list(state[gps_key])
+                    pose_matrix = None
+                    position = None
+                    angles_deg = None
+                    bearing_deg = None
+                    if pose_key is not None and pose_key in sensor_state:
+                        raw_pose = as_pose_matrix(sensor_state[pose_key])
+                        if raw_pose is not None:
+                            rotation = raw_pose[:3, :3]
+                            roll, pitch, yaw = euler_zyx_deg_from_rotation(rotation)
+                            pose_matrix = raw_pose.astype(np.float64).tolist()
+                            position = to_float_list(raw_pose[:3, 3])
+                            angles_deg = {
+                                "roll": float(roll),
+                                "pitch": float(pitch),
+                                "yaw": float(yaw),
+                            }
+                            bearing_deg = float((yaw + 360.0) % 360.0)
 
                     with self._ready:
                         self._frame = FrameData(
                             jpeg=encoded.tobytes(),
                             image_key=image_key,
                             image_source=image_source,
-                            gps_key=gps_key,
-                            gps=gps,
+                            pose_key=pose_key,
+                            pose_matrix=pose_matrix,
+                            position=position,
+                            angles_deg=angles_deg,
+                            bearing_deg=bearing_deg,
                             tick=tick,
                             unix_time_s=time.time(),
                             error=None,
@@ -291,8 +399,11 @@ class HoloOceanViewportService:
                 jpeg=self._frame.jpeg,
                 image_key=self._frame.image_key,
                 image_source=self._frame.image_source,
-                gps_key=self._frame.gps_key,
-                gps=self._frame.gps,
+                pose_key=self._frame.pose_key,
+                pose_matrix=self._frame.pose_matrix,
+                position=self._frame.position,
+                angles_deg=self._frame.angles_deg,
+                bearing_deg=self._frame.bearing_deg,
                 tick=self._frame.tick,
                 unix_time_s=self._frame.unix_time_s,
                 error=self._frame.error,
@@ -304,6 +415,7 @@ class HoloOceanViewportService:
 SCENARIO = os.getenv("HOLOOCEAN_SCENARIO", "SLAMCloud-test")
 
 VIEWPORT_SENSOR_NAME = os.getenv("VIEWPORT_SENSOR_NAME", "ViewportCapture")
+POSE_SENSOR_NAME = os.getenv("POSE_SENSOR_NAME", "PoseSensor")
 VIEWPORT_WIDTH = int(os.getenv("VIEWPORT_WIDTH", "1280"))
 VIEWPORT_HEIGHT = int(os.getenv("VIEWPORT_HEIGHT", "720"))
 HOLOOCEAN_VERBOSE = env_bool("HOLOOCEAN_VERBOSE", False)
@@ -313,6 +425,7 @@ JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "90"))
 viewport_service = HoloOceanViewportService(
     scenario_name=SCENARIO,
     viewport_sensor_name=VIEWPORT_SENSOR_NAME,
+    pose_sensor_name=POSE_SENSOR_NAME,
     viewport_width=VIEWPORT_WIDTH,
     viewport_height=VIEWPORT_HEIGHT,
     holoocean_verbose=HOLOOCEAN_VERBOSE,
@@ -339,6 +452,7 @@ def health():
     return {
         "scenario": SCENARIO,
         "viewport_sensor_name": VIEWPORT_SENSOR_NAME,
+        "pose_sensor_name": POSE_SENSOR_NAME,
         "viewport_width": VIEWPORT_WIDTH,
         "viewport_height": VIEWPORT_HEIGHT,
         "holoocean_verbose": HOLOOCEAN_VERBOSE,
@@ -347,8 +461,11 @@ def health():
         "image_source": frame.image_source,
         "image_key": frame.image_key,
         "camera_key": frame.image_key,
-        "gps_key": frame.gps_key,
-        "gps": frame.gps,
+        "pose_key": frame.pose_key,
+        "pose_matrix": frame.pose_matrix,
+        "position": frame.position,
+        "angles_deg": frame.angles_deg,
+        "bearing_deg": frame.bearing_deg,
         "tick": frame.tick,
         "error": frame.error,
         "error_traceback": frame.error_traceback,
@@ -363,7 +480,17 @@ def latest_jpg(wait_ms: int = 0):
     if frame.jpeg is None:
         raise HTTPException(status_code=503, detail="No frame available yet")
 
-    gps_values = frame.gps or []
+    position_values = frame.position or []
+    angles = frame.angles_deg or {}
+    angles_header = ""
+    if angles:
+        angles_header = ",".join(
+            [
+                str(angles.get("roll", "")),
+                str(angles.get("pitch", "")),
+                str(angles.get("yaw", "")),
+            ]
+        )
     return Response(
         content=frame.jpeg,
         media_type="image/jpeg",
@@ -373,8 +500,12 @@ def latest_jpg(wait_ms: int = 0):
             "X-HoloOcean-Image-Source": frame.image_source,
             "X-HoloOcean-Image-Key": str(frame.image_key or ""),
             "X-HoloOcean-Camera-Key": str(frame.image_key or ""),
-            "X-HoloOcean-GPS-Key": str(frame.gps_key or ""),
-            "X-HoloOcean-GPS": ",".join(str(v) for v in gps_values),
+            "X-HoloOcean-Pose-Key": str(frame.pose_key or ""),
+            "X-HoloOcean-Position": ",".join(str(v) for v in position_values),
+            "X-HoloOcean-Angles-Deg": angles_header,
+            "X-HoloOcean-Bearing-Deg": (
+                "" if frame.bearing_deg is None else str(frame.bearing_deg)
+            ),
         },
     )
 
@@ -393,8 +524,11 @@ def latest(wait_ms: int = 0, include_image: bool = False):
         "image_source": frame.image_source,
         "image_key": frame.image_key,
         "camera_key": frame.image_key,
-        "gps_key": frame.gps_key,
-        "gps": frame.gps,
+        "pose_key": frame.pose_key,
+        "pose_matrix": frame.pose_matrix,
+        "position": frame.position,
+        "angles_deg": frame.angles_deg,
+        "bearing_deg": frame.bearing_deg,
     }
     if include_image:
         body["image_jpeg_base64"] = b64encode(frame.jpeg).decode("ascii")
@@ -407,6 +541,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "api:app",
         host=os.getenv("HOST", "0.0.0.0"),
-        port=int(os.getenv("PORT", "8000")),
+        port=int(os.getenv("PORT", "8900")),
         reload=False,
     )

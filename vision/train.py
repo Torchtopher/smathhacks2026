@@ -4,7 +4,7 @@ model = YOLO("yolov8n.pt")
 
 results = model.train(
     data="Floating-Trash-Detection-1/data.yaml",
-    epochs=10,
+    epochs=100,
     imgsz=640,
     batch=16,
     project="trash",
