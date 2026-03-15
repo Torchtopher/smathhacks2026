@@ -384,8 +384,7 @@ export function AnalyticsPage({ boats, detections }: AnalyticsPageProps) {
         </Card>
 
         {/* Detection Rate Over Time */}
-        {hourlyByLabel.length > 0 && (
-          <Card>
+        <Card>
             <CardHeader>
               <CardTitle>Detection Rate Over Time</CardTitle>
             </CardHeader>
@@ -412,11 +411,9 @@ export function AnalyticsPage({ boats, detections }: AnalyticsPageProps) {
               </ChartContainer>
             </CardContent>
           </Card>
-        )}
 
         {/* Detections per Hour by Boat */}
-        {hourlyByBoat.length > 0 && (
-          <Card>
+        <Card>
             <CardHeader>
               <CardTitle>Detections per Hour by Boat</CardTitle>
             </CardHeader>
@@ -442,11 +439,9 @@ export function AnalyticsPage({ boats, detections }: AnalyticsPageProps) {
               </ChartContainer>
             </CardContent>
           </Card>
-        )}
 
         {/* Detection Heatmap */}
-        {detections.length > 0 && (
-          <Card className="md:col-span-2">
+        <Card className="md:col-span-2">
             <CardHeader>
               <CardTitle>Detection Heatmap</CardTitle>
             </CardHeader>
@@ -466,7 +461,6 @@ export function AnalyticsPage({ boats, detections }: AnalyticsPageProps) {
               </div>
             </CardContent>
           </Card>
-        )}
 
         <Card>
           <CardHeader>

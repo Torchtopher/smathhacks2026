@@ -6,6 +6,8 @@ declare module "react-leaflet-cluster" {
     children?: React.ReactNode
     chunkedLoading?: boolean
     iconCreateFunction?: (cluster: { getChildCount: () => number }) => L.DivIcon
+    maxClusterRadius?: number
+    disableClusteringAtZoom?: number
   }
 
   const MarkerClusterGroup: FC<MarkerClusterGroupProps>

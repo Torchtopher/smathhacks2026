@@ -20,7 +20,8 @@ export function HeatmapLayer({ detections }: HeatmapLayerProps) {
       d.confidence,
     ])
 
-    const heat = (L as unknown as Record<string, unknown>).heatLayer(points, {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const heat = (L as any).heatLayer(points, {
       radius: 25,
       blur: 15,
       maxZoom: 17,
