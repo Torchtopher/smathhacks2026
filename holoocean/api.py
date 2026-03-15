@@ -147,31 +147,6 @@ def euler_zyx_deg_from_rotation(rotation: np.ndarray) -> tuple[float, float, flo
     return math.degrees(roll), math.degrees(pitch), math.degrees(yaw)
 
 
-def build_forward_command(buffer_shape: tuple[int, ...]) -> np.ndarray:
-    forward = float(os.getenv("FORWARD_THRUST", "200.0"))
-    # For 2-thruster surface vessel, this is differential thrust:
-    # left = forward - diff, right = forward + diff.
-    diff = float(os.getenv("FORWARD_DIFF", os.getenv("FORWARD_TURN", "0.0")))
-    command = np.zeros(buffer_shape, dtype=np.float32)
-    flat = command.reshape(-1)
-    action_size = int(flat.size)
-
-    # Common vehicle layouts:
-    # - 2 actions (SurfaceVessel scheme 0): [left_thruster, right_thruster]
-    # - 4+ actions: first 4 are drive/propulsion channels
-    if action_size == 1:
-        flat[0] = forward
-    elif action_size == 2:
-        flat[0] = forward - diff
-        flat[1] = forward + diff
-    elif action_size >= 4:
-        flat[:4] = forward
-    else:
-        flat[:] = forward
-
-    return command
-
-
 def build_differential_command(
     buffer_shape: tuple[int, ...],
     forward: float,
