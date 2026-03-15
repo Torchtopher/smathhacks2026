@@ -1,7 +1,7 @@
 import { Marker, Tooltip, Polyline } from "react-leaflet"
 import L from "leaflet"
 import { renderToStaticMarkup } from "react-dom/server"
-import { Sailboat, Ship } from "lucide-react"
+import { Ship } from "lucide-react"
 import type { BoatState } from "@/types"
 import { Badge } from "@/components/ui/badge"
 
@@ -12,13 +12,14 @@ interface BoatMarkersProps {
   dark: boolean
 }
 
+const sizeByWeight = { light: 24, medium: 30, heavy: 36 } as const
+
 function boatIcon(weightClass: BoatState["weight_class"], dark: boolean) {
-  const IconComponent = weightClass === "light" ? Sailboat : Ship
-  const size = weightClass === "light" ? 28 : 34
+  const size = sizeByWeight[weightClass]
   const color = dark ? "white" : "var(--primary)"
   const svg = renderToStaticMarkup(
     <span style={{ color }}>
-      <IconComponent size={size} color="currentColor" />
+      <Ship size={size} color="currentColor" />
     </span>
   )
 
@@ -44,6 +45,7 @@ export function BoatMarkers({ boats, selectedBoatId, onBoatClick, dark }: BoatMa
           <Marker
             position={[boat.gps_lat, boat.gps_lon]}
             icon={boatIcon(boat.weight_class, dark)}
+            zIndexOffset={1000}
             eventHandlers={{ click: () => onBoatClick(boat) }}
           >
             <Tooltip>

@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS boat_states (
     timestamp DOUBLE PRECISION NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS trash_detections (
+CREATE TABLE IF NOT EXISTS detections (
     id UUID PRIMARY KEY,
     boat_id TEXT NOT NULL,
     confidence DOUBLE PRECISION NOT NULL,
@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS trash_detections (
 CREATE TABLE IF NOT EXISTS boats (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    weight_class TEXT NOT NULL,
+    weight_class TEXT NOT NULL CHECK (weight_class IN ('light', 'medium', 'heavy')),
     created_at DOUBLE PRECISION NOT NULL,
     last_image TEXT
 );
@@ -38,14 +38,17 @@ CREATE TABLE IF NOT EXISTS boat_positions (
     timestamp DOUBLE PRECISION NOT NULL
 );
 
+ALTER TABLE detections
+ADD COLUMN IF NOT EXISTS label TEXT NOT NULL DEFAULT 'trash';
+
 DO $$
 BEGIN
-    IF to_regclass('public.trash_detections') IS NOT NULL THEN
-        CREATE INDEX IF NOT EXISTS idx_trash_location_gist
-        ON trash_detections USING GIST (location);
+    IF to_regclass('public.detections') IS NOT NULL THEN
+        CREATE INDEX IF NOT EXISTS idx_detection_location_gist
+        ON detections USING GIST (location);
 
-        CREATE INDEX IF NOT EXISTS idx_trash_detected_at
-        ON trash_detections (detected_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_detection_detected_at
+        ON detections (detected_at DESC);
     END IF;
 
     IF to_regclass('public.boat_positions') IS NOT NULL THEN

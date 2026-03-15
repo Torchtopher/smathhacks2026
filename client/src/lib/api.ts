@@ -1,4 +1,4 @@
-import type { BoatState, TrashPoint } from "@/types"
+import type { BoatState, Detection } from "@/types"
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${path}`)
@@ -60,36 +60,38 @@ export const api = {
     }))
   },
 
-  async getTrash(): Promise<TrashPoint[]> {
+  async getDetections(): Promise<Detection[]> {
     const data = await get<{
-      trash_points: {
+      detections: {
         id: string
         lat: number
         lon: number
         confidence: number
         detected_at: number
         boat_id: string
+        label: string
         drift_path?: {
           lat: number
           lon: number
           time_offset_hours: number
         }[]
       }[]
-    }>(`/api/trash`)
-    return data.trash_points.map((t) => ({
+    }>(`/api/detections`)
+    return data.detections.map((t) => ({
       id: t.id,
       lat: t.lat,
       lon: t.lon,
       confidence: t.confidence,
       detected_at: t.detected_at,
       boat_id: t.boat_id,
+      label: t.label,
       drift_path: t.drift_path ?? [],
     }))
   },
 
   async getStats() {
     return get<{
-      total_trash_detected: number
+      total_detections: number
       active_boats: number
       last_detection_time: number | null
     }>("/api/stats")

@@ -1,9 +1,14 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+WeightClass = Literal["light", "medium", "heavy"]
 
 
 class DetectionInput(BaseModel):
     confidence: float
     bbox: list[float] = Field(min_length=4, max_length=4)
+    label: str = "trash"
 
 
 class BoatReport(BaseModel):
@@ -12,12 +17,12 @@ class BoatReport(BaseModel):
     gps_lat: float
     gps_lon: float
     heading: float
-    image: str = ""
+    image: str = Field(min_length=1)
 
 
 class BoatRegisterInput(BaseModel):
     name: str
-    weight_class: str
+    weight_class: WeightClass
 
 
 class BoatRegisterResponse(BaseModel):
@@ -29,12 +34,12 @@ class BoatRegisterResponse(BaseModel):
 class BoatAdminCreateInput(BaseModel):
     boat_id: str | None = None
     name: str
-    weight_class: str
+    weight_class: WeightClass
 
 
 class BoatAdminUpdateInput(BaseModel):
     name: str | None = None
-    weight_class: str | None = None
+    weight_class: WeightClass | None = None
 
 
 class BoatAdminResponse(BaseModel):
@@ -68,6 +73,7 @@ class DetectionSaved(BaseModel):
     projected_lat: float
     projected_lon: float
     drift_path: list[DriftPoint] = Field(default_factory=list)
+    label: str = "trash"
 
 
 class BoatStateResponse(BaseModel):
@@ -86,7 +92,7 @@ class BoatPositionPointResponse(BaseModel):
     timestamp: float
 
 
-class TrashPointResponse(BaseModel):
+class DetectionPointResponse(BaseModel):
     id: str
     lat: float
     lon: float
@@ -94,3 +100,4 @@ class TrashPointResponse(BaseModel):
     detected_at: float
     boat_id: str
     drift_path: list[DriftPoint] = Field(default_factory=list)
+    label: str = "trash"

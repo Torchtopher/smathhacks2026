@@ -46,9 +46,12 @@ def detect(image_bytes: bytes) -> list[DetectionInput]:
             for box in result.boxes:
                 x1, y1, x2, y2 = box.xyxy[0].tolist()
                 conf = float(box.conf[0])
+                class_id = int(box.cls[0])
+                label = model.names.get(class_id, "trash")
                 detections.append(DetectionInput(
                     confidence=conf,
                     bbox=[x1 / w, y1 / h, x2 / w, y2 / h],
+                    label=label,
                 ))
         return detections
     except Exception:

@@ -98,14 +98,14 @@ export const demoBoats: BoatState[] = [
   },
 ]
 
-export const demoTrash = demoBoats.flatMap((boat, _bi) =>
+export const demoDetections = demoBoats.flatMap((boat, _bi) =>
   Array.from({ length: 3 }, (_, i) => {
     const offsetLat = (Math.random() - 0.5) * 0.04
     const offsetLon = (Math.random() - 0.5) * 0.04
     const lat = boat.gps_lat + offsetLat
     const lon = boat.gps_lon + offsetLon
     return {
-      id: `trash-${boat.boat_id}-${i}`,
+      id: `det-${boat.boat_id}-${i}`,
       lat,
       lon,
       confidence: 0.7 + Math.random() * 0.25,

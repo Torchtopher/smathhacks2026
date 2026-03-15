@@ -7,13 +7,13 @@ import { AdminPage } from "@/components/admin-page"
 import { AddBoatDialog } from "@/components/add-boat-dialog"
 import { BoatDetailSheet } from "@/components/boat-detail-sheet"
 import { api } from "@/lib/api"
-import type { BoatState, TrashPoint } from "@/types"
+import type { BoatState, Detection } from "@/types"
 
 const POLL_INTERVAL = 5_000
 
 function App() {
   const [boats, setBoats] = useState<BoatState[]>([])
-  const [trashPoints, setTrashPoints] = useState<TrashPoint[]>([])
+  const [detections, setDetections] = useState<Detection[]>([])
   const [timeHours, setTimeHours] = useState(0)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [selectedBoatId, setSelectedBoatId] = useState<string | null>(null)
@@ -31,7 +31,7 @@ function App() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [b, t, h] = await Promise.all([api.getBoats(), api.getTrash(), api.getBoatHistory()])
+      const [b, t, h] = await Promise.all([api.getBoats(), api.getDetections(), api.getBoatHistory()])
       const trails = new Map<string, [number, number][]>()
       for (const p of h.points) {
         let arr = trails.get(p.boat_id)
@@ -39,7 +39,7 @@ function App() {
         arr.push([p.gps_lat, p.gps_lon])
       }
       setBoats(b.map(boat => ({ ...boat, trail: trails.get(boat.boat_id) })))
-      setTrashPoints(t)
+      setDetections(t)
       setConnected(true)
     } catch (err) {
       console.error("Failed to fetch data:", err)
@@ -62,14 +62,14 @@ function App() {
             boats={boats}
             selectedBoatId={selectedBoatId}
             onBoatClick={(boat) => setSelectedBoatId(boat.boat_id)}
-            trashPoints={trashPoints}
+            detections={detections}
             timeHours={timeHours}
             onTimeChange={setTimeHours}
             dark={dark}
           />
         } />
         <Route path="/analytics" element={
-          <AnalyticsPage boats={boats} trashPoints={trashPoints} />
+          <AnalyticsPage boats={boats} detections={detections} />
         } />
         <Route path="/admin" element={
           <AdminPage onDataChanged={fetchData} />

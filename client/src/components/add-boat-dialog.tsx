@@ -118,6 +118,7 @@ export function AddBoatDialog({ open, onOpenChange }: AddBoatDialogProps) {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="light">Light</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
                   <SelectItem value="heavy">Heavy</SelectItem>
                 </SelectContent>
               </Select>

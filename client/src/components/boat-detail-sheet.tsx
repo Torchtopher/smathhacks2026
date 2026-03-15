@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from "@/components/ui/badge"
-import { Sailboat, Ship, Navigation, MapPin } from "lucide-react"
+import { Ship, Navigation, MapPin } from "lucide-react"
 import type { BoatState } from "@/types"
 
 interface BoatDetailSheetProps {
@@ -35,11 +35,7 @@ export function BoatDetailSheet({ boat, onOpenChange }: BoatDetailSheetProps) {
           <>
             <SheetHeader>
               <div className="flex items-center gap-2">
-                {boat.weight_class === "light" ? (
-                  <Sailboat className="h-5 w-5 text-primary" />
-                ) : (
-                  <Ship className="h-5 w-5 text-primary" />
-                )}
+                <Ship className="h-5 w-5 text-primary" />
                 <SheetTitle>{boat.name}</SheetTitle>
               </div>
               <SheetDescription>Boat details and position</SheetDescription>
